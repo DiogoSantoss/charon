@@ -1,10 +1,12 @@
 package aba
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
-	"log"
 
+	"github.com/obolnetwork/charon/app/log"
+	"github.com/obolnetwork/charon/app/z"
 	"github.com/obolnetwork/charon/tbls"
 )
 
@@ -13,7 +15,7 @@ import (
 
 // GetCommonCoinName returns a unique nonce representing the coin name
 // for the given slot and round
-func GetCommonCoinName(slot int, round int) ([]byte, error) {
+func getCommonCoinName(slot int, round int) ([]byte, error) {
 	name := fmt.Sprintf("AleaCommmonCoin%v%v", slot, round)
 	nonce := sha256.Sum256([]byte(name))
 
@@ -21,8 +23,8 @@ func GetCommonCoinName(slot int, round int) ([]byte, error) {
 }
 
 // GetCommonCoinNameSigned returns a signature share of the coin name
-func GetCommonCoinNameSigned(slot int, round int, privateKey tbls.PrivateKey) (tbls.Signature, error) {
-	name, err := GetCommonCoinName(slot, round)
+func getCommonCoinNameSigned(slot int, round int, privateKey tbls.PrivateKey) (tbls.Signature, error) {
+	name, err := getCommonCoinName(slot, round)
 	if err != nil {
 		return tbls.Signature{}, err
 	}
@@ -31,7 +33,7 @@ func GetCommonCoinNameSigned(slot int, round int, privateKey tbls.PrivateKey) (t
 }
 
 // GetCommonCoinResult returns the coin result by threshold aggregating the signatures
-func GetCommonCoinResult(signatures map[int]tbls.Signature) (uint, error) {
+func getCommonCoinResult(signatures map[int]tbls.Signature) (uint, error) {
 	// TODO: Does this threshold aggregate works in the following situation ?
 	// have f+2 signatures, one of them is invalid, still f+1 valid
 	// does the aggregation fail or not ?
@@ -43,14 +45,15 @@ func GetCommonCoinResult(signatures map[int]tbls.Signature) (uint, error) {
 	return uint(totalSig[0] & 1), nil
 }
 
+// Temporary struct to send/receive messages from/to peers
 type TempABAMessage struct {
 	Id  int
 	Sig tbls.Signature
 }
 
-func Run(id int, slot int, round int, privateKey tbls.PrivateKey, broadcast func(int, tbls.Signature) error, receiveChannel <-chan TempABAMessage) (uint, error) {
+func SampleCoin(ctx context.Context, id int, slot int, round int, privateKey tbls.PrivateKey, broadcast func(int, tbls.Signature) error, receiveChannel <-chan TempABAMessage) (uint, error) {
 
-	log.Printf("Node %d starting ABA instance\n", id)
+	log.Info(ctx, "Node id sampled common coin", z.Int("id", id))
 
 	// === State ===
 	var (
@@ -59,14 +62,12 @@ func Run(id int, slot int, round int, privateKey tbls.PrivateKey, broadcast func
 	)
 
 	{
-		signature, err := GetCommonCoinNameSigned(slot, round, privateKey)
+		signature, err := getCommonCoinNameSigned(slot, round, privateKey)
 		if err != nil {
 			return 0, err
 		}
 		signatures[id] = signature
-		log.Printf("Node %d is going to broadcast signature\n", id)
 		err = broadcast(id, signature)
-		log.Printf("Node %d broadcasted signature\n", id)
 		if err != nil {
 			return 0, err
 		}
@@ -76,18 +77,18 @@ func Run(id int, slot int, round int, privateKey tbls.PrivateKey, broadcast func
 		select {
 		case msg := <-receiveChannel:
 
-			log.Printf("Node %d received signature from %d\n", id, msg.Id)
+			log.Info(ctx, "Node id received signature from source", z.Int("id", id), z.Int("source", msg.Id))
 
 			signatures[msg.Id] = msg.Sig
 
 			if len(signatures) >= f+1 {
 
-				result, err := GetCommonCoinResult(signatures)
+				result, err := getCommonCoinResult(signatures)
 				if err != nil {
 					return 0, err
 				}
 
-				log.Printf("Node %d decided with %d\n", id, result)
+				log.Info(ctx, "Node id decided value", z.Int("id", id), z.Uint("value", result))
 
 				return result, nil
 			}

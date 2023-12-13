@@ -1,6 +1,8 @@
 package aba
 
 import (
+	"context"
+
 	"github.com/obolnetwork/charon/tbls"
 )
 
@@ -72,8 +74,8 @@ func classify(msg ABAMessage, receivedInit []ABAMessage, receivedAux []ABAMessag
 	// TODO: get f from somewhere
 	f := 1
 	n := 3*f + 1
-	smallQuorum := 2*f + 1
-	bigQuorum := f + 1
+	smallQuorum := f + 1
+	bigQuorum := 2*f + 1
 
 	switch msg.msgType {
 	case MsgInit:
@@ -101,7 +103,7 @@ func classify(msg ABAMessage, receivedInit []ABAMessage, receivedAux []ABAMessag
 	return UponNothing
 }
 
-func RunABA(id uint, slot uint, privateKey tbls.PrivateKey, valueInput uint, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
+func RunABA(ctx context.Context, id uint, slot uint, privateKey tbls.PrivateKey, valueInput uint, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
 	broadcastCommonCoin func(int, tbls.Signature) error, receiveChannelCommonCoin <-chan TempABAMessage) (uint, error) {
 
 	// === State ===
@@ -116,8 +118,6 @@ func RunABA(id uint, slot uint, privateKey tbls.PrivateKey, valueInput uint, bro
 		receivedConf                  = make(map[uint][]ABAMessage)
 		receivedFinish                = make(map[uint][]ABAMessage)
 	)
-
-	estimative[round] = valueInput
 
 	storeMessage := func(msg ABAMessage) {
 		switch msg.msgType {
@@ -135,6 +135,8 @@ func RunABA(id uint, slot uint, privateKey tbls.PrivateKey, valueInput uint, bro
 	}
 
 	// === Algorithm ===
+
+	estimative[round] = valueInput // Algorithm 1:3
 
 	{ // Algorithm 1:4
 		err := broadcast(ABAMessage{
@@ -162,7 +164,7 @@ func RunABA(id uint, slot uint, privateKey tbls.PrivateKey, valueInput uint, bro
 
 			switch rule {
 
-			case UponWeakSupportFinish:
+			case UponWeakSupportFinish: // Algorithm 1:1
 				if alreadyBroadcastedFinish[msg.round] == false {
 					alreadyBroadcastedFinish[msg.round] = true
 					msg.source = id
@@ -172,7 +174,7 @@ func RunABA(id uint, slot uint, privateKey tbls.PrivateKey, valueInput uint, bro
 					}
 				}
 
-			case UponStrongSupportFinish:
+			case UponStrongSupportFinish: // Algorithm 1:2
 				return msg.estimative, nil
 
 			case UponWeakSupportInit: // Algorithm 1:5
@@ -208,7 +210,7 @@ func RunABA(id uint, slot uint, privateKey tbls.PrivateKey, valueInput uint, bro
 					return 0, err
 				}
 			case UponSupportConf: // Algorithm 1:8
-				sr, err := SampleCoin(int(id), int(slot), int(msg.round), privateKey, broadcastCommonCoin, receiveChannelCommonCoin) // Algorithm 1:9
+				sr, err := SampleCoin(ctx, int(id), int(slot), int(msg.round), privateKey, broadcastCommonCoin, receiveChannelCommonCoin) // Algorithm 1:9
 				if err != nil {
 					return 0, err
 				}
