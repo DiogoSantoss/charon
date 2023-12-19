@@ -33,11 +33,21 @@ func getCommonCoinNameSigned(slot int, round int, privateKey tbls.PrivateKey) (t
 }
 
 // GetCommonCoinResult returns the coin result by threshold aggregating the signatures
-func getCommonCoinResult(signatures map[int]tbls.Signature) (uint, error) {
+func getCommonCoinResult(slot int, round int, pubKey tbls.PublicKey, signatures map[int]tbls.Signature) (uint, error) {
 	// TODO: Does this threshold aggregate works in the following situation ?
 	// have f+2 signatures, one of them is invalid, still f+1 valid
 	// does the aggregation fail or not ?
 	totalSig, err := tbls.ThresholdAggregate(signatures)
+	if err != nil {
+		return 0, err
+	}
+
+	sid, err := getCommonCoinName(slot, round)
+	if err != nil {
+		return 0, err
+	}
+
+	err = tbls.Verify(pubKey, sid, totalSig)
 	if err != nil {
 		return 0, err
 	}
@@ -51,7 +61,7 @@ type TempABAMessage struct {
 	Sig tbls.Signature
 }
 
-func SampleCoin(ctx context.Context, id int, slot int, round int, privateKey tbls.PrivateKey, broadcast func(int, tbls.Signature) error, receiveChannel <-chan TempABAMessage) (uint, error) {
+func SampleCoin(ctx context.Context, id int, slot int, round int, pubKey tbls.PublicKey, privateKey tbls.PrivateKey, broadcast func(int, tbls.Signature) error, receiveChannel <-chan TempABAMessage) (uint, error) {
 
 	log.Info(ctx, "Node id sampled common coin", z.Int("id", id))
 
@@ -83,9 +93,9 @@ func SampleCoin(ctx context.Context, id int, slot int, round int, privateKey tbl
 
 			if len(signatures) >= f+1 {
 
-				result, err := getCommonCoinResult(signatures)
+				result, err := getCommonCoinResult(slot, round, pubKey, signatures)
 				if err != nil {
-					return 0, err
+					continue
 				}
 
 				log.Info(ctx, "Node id decided value", z.Int("id", id), z.Uint("value", result))

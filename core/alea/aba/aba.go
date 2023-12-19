@@ -103,7 +103,7 @@ func classify(msg ABAMessage, receivedInit []ABAMessage, receivedAux []ABAMessag
 	return UponNothing
 }
 
-func RunABA(ctx context.Context, id uint, slot uint, privateKey tbls.PrivateKey, valueInput uint, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
+func RunABA(ctx context.Context, id uint, slot uint, publicKey tbls.PublicKey, privateKey tbls.PrivateKey, valueInput uint, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
 	broadcastCommonCoin func(int, tbls.Signature) error, receiveChannelCommonCoin <-chan TempABAMessage) (uint, error) {
 
 	// === State ===
@@ -210,7 +210,7 @@ func RunABA(ctx context.Context, id uint, slot uint, privateKey tbls.PrivateKey,
 					return 0, err
 				}
 			case UponSupportConf: // Algorithm 1:8
-				sr, err := SampleCoin(ctx, int(id), int(slot), int(msg.round), privateKey, broadcastCommonCoin, receiveChannelCommonCoin) // Algorithm 1:9
+				sr, err := SampleCoin(ctx, int(id), int(slot), int(msg.round), publicKey, privateKey, broadcastCommonCoin, receiveChannelCommonCoin) // Algorithm 1:9
 				if err != nil {
 					return 0, err
 				}
