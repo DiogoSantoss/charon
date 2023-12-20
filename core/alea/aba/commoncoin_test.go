@@ -51,11 +51,6 @@ func TestCommonCoin(t *testing.T) {
 		})
 	})
 
-	// TODO: this test doesn't end because
-	// threshold aggregate fails if one signature is invalid
-	// (see commoncoin_internal_test.go)
-	// Note: sometimes it passes, because there is a chance
-	// that the faulty signature still results in a common output
 	t.Run("faulty signature", func(t *testing.T) {
 		testCommonCoin(t, test{
 			Round: 0,
@@ -74,8 +69,8 @@ func TestCommonCoin(t *testing.T) {
 }
 
 type test struct {
-	Round      int
-	Slot       int
+	Round      uint
+	Slot       uint
 	StartDelay map[int64]time.Duration
 	DeadNodes  map[int64]bool
 	FaultySig  map[int64]bool
@@ -90,15 +85,22 @@ func testCommonCoin(t *testing.T, test test) {
 	const f = 1
 	const n = 3*f + 1
 
+	// generate private key shares and corresponding public keys
 	shares, _ := tbls.ThresholdSplit(secret, n, f+1)
+	pubKeys := make(map[uint]tbls.PublicKey)
+	for i, share := range shares {
+		pubKeys[uint(i)], _ = tbls.SecretToPublicKey(share)
+	}
 
-	// set of channels for communication
-	channels := make([]chan TempABAMessage, n)
+	channels := make([]chan CommonCoinMessage, n)
 
-	// send message to all channels
-	broadcast := func(id int, signature tbls.Signature) error {
-		for _, channel := range channels {
-			channel <- TempABAMessage{id, signature}
+	// send message to all channels except the sender
+	broadcast := func(msg CommonCoinMessage) error {
+		for i, channel := range channels {
+			if i+1 == int(msg.Source) {
+				continue
+			}
+			channel <- msg
 		}
 		return nil
 	}
@@ -110,24 +112,25 @@ func testCommonCoin(t *testing.T, test test) {
 	defer cancel()
 
 	var wg sync.WaitGroup
+	// Don't wait for processes that have faulty signatures
+	// since they may never finish
+	wg.Add(n - len(test.FaultySig))
+	
 	// spawn go routines to participate in protocol
 	for i := 0; i < n; i++ {
 
 		id := i + 1
-		channels[i] = make(chan TempABAMessage, n)
+		channels[i] = make(chan CommonCoinMessage, n)
 
-		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 
-			// testing delay
 			if test.StartDelay != nil {
 				if delay, ok := test.StartDelay[int64(id)]; ok {
 					time.Sleep(delay)
 				}
 			}
 
-			// dead node
 			if test.DeadNodes != nil {
 				if _, ok := test.DeadNodes[int64(id)]; ok {
 					t.Logf("node %d is dead", id)
@@ -135,7 +138,6 @@ func testCommonCoin(t *testing.T, test test) {
 				}
 			}
 
-			// faulty signature
 			if test.FaultySig != nil {
 				if _, ok := test.FaultySig[int64(id)]; ok {
 					t.Logf("node %d has faulty signature", id)
@@ -144,7 +146,7 @@ func testCommonCoin(t *testing.T, test test) {
 				}
 			}
 
-			result, err := SampleCoin(ctx, id, test.Slot, test.Round, public, shares[id], broadcast, channels[i])
+			result, err := SampleCoin(ctx, uint(id), test.Slot, test.Round, public, pubKeys, shares[id], broadcast, channels[i])
 			if err != nil {
 				require.Failf(t, err.Error(), "aba execution %d failed", id)
 			}

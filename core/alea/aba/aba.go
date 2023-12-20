@@ -37,6 +37,16 @@ func (t MsgType) String() string {
 
 type UponRule uint
 
+const (
+	UponNothing UponRule = iota
+	UponWeakSupportInit
+	UponStrongSupportInit
+	UponSupportAux
+	UponSupportConf
+	UponWeakSupportFinish
+	UponStrongSupportFinish
+)
+
 var ruleLabels = map[UponRule]string{
 	UponNothing:             "nothing",
 	UponWeakSupportInit:     "weak_support_init",
@@ -59,16 +69,7 @@ type ABAMessage struct {
 	round      uint
 }
 
-const (
-	UponNothing UponRule = iota
-	UponWeakSupportInit
-	UponStrongSupportInit
-	UponSupportAux
-	UponSupportConf
-	UponWeakSupportFinish
-	UponStrongSupportFinish
-)
-
+// Returns the triggered upon rule by the received message
 func classify(msg ABAMessage, receivedInit []ABAMessage, receivedAux []ABAMessage, receivedConf []ABAMessage, receivedFinish []ABAMessage) UponRule {
 
 	// TODO: get f from somewhere
@@ -103,8 +104,8 @@ func classify(msg ABAMessage, receivedInit []ABAMessage, receivedAux []ABAMessag
 	return UponNothing
 }
 
-func RunABA(ctx context.Context, id uint, slot uint, publicKey tbls.PublicKey, privateKey tbls.PrivateKey, valueInput uint, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
-	broadcastCommonCoin func(int, tbls.Signature) error, receiveChannelCommonCoin <-chan TempABAMessage) (uint, error) {
+func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey, valueInput uint, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
+	broadcastCommonCoin func(CommonCoinMessage) error, receiveChannelCommonCoin <-chan CommonCoinMessage) (uint, error) {
 
 	// === State ===
 	var (
@@ -174,7 +175,7 @@ func RunABA(ctx context.Context, id uint, slot uint, publicKey tbls.PublicKey, p
 					}
 				}
 
-			case UponStrongSupportFinish: // Algorithm 1:2
+			case UponStrongSupportFinish: // Algorithm 1:2TempABAMessage
 				return msg.estimative, nil
 
 			case UponWeakSupportInit: // Algorithm 1:5
@@ -210,7 +211,7 @@ func RunABA(ctx context.Context, id uint, slot uint, publicKey tbls.PublicKey, p
 					return 0, err
 				}
 			case UponSupportConf: // Algorithm 1:8
-				sr, err := SampleCoin(ctx, int(id), int(slot), int(msg.round), publicKey, privateKey, broadcastCommonCoin, receiveChannelCommonCoin) // Algorithm 1:9
+				sr, err := SampleCoin(ctx, id, slot, msg.round, pubKey, pubKeys, privKey, broadcastCommonCoin, receiveChannelCommonCoin) // Algorithm 1:9
 				if err != nil {
 					return 0, err
 				}

@@ -13,9 +13,16 @@ import (
 // CommonCoin implementation from the paper: "The Honey Badger of BFT Protocols"
 // Link: https://eprint.iacr.org/2016/199.pdf (Figure 12)
 
+type CommonCoinMessage struct {
+	Source uint
+	Slot   uint
+	Round  uint
+	Sig    tbls.Signature
+}
+
 // GetCommonCoinName returns a unique nonce representing the coin name
 // for the given slot and round
-func getCommonCoinName(slot int, round int) ([]byte, error) {
+func getCommonCoinName(slot uint, round uint) ([]byte, error) {
 	name := fmt.Sprintf("AleaCommmonCoin%v%v", slot, round)
 	nonce := sha256.Sum256([]byte(name))
 
@@ -23,7 +30,7 @@ func getCommonCoinName(slot int, round int) ([]byte, error) {
 }
 
 // GetCommonCoinNameSigned returns a signature share of the coin name
-func getCommonCoinNameSigned(slot int, round int, privateKey tbls.PrivateKey) (tbls.Signature, error) {
+func getCommonCoinNameSigned(slot uint, round uint, privateKey tbls.PrivateKey) (tbls.Signature, error) {
 	name, err := getCommonCoinName(slot, round)
 	if err != nil {
 		return tbls.Signature{}, err
@@ -33,10 +40,7 @@ func getCommonCoinNameSigned(slot int, round int, privateKey tbls.PrivateKey) (t
 }
 
 // GetCommonCoinResult returns the coin result by threshold aggregating the signatures
-func getCommonCoinResult(slot int, round int, pubKey tbls.PublicKey, signatures map[int]tbls.Signature) (uint, error) {
-	// TODO: Does this threshold aggregate works in the following situation ?
-	// have f+2 signatures, one of them is invalid, still f+1 valid
-	// does the aggregation fail or not ?
+func getCommonCoinResult(ctx context.Context, slot uint, round uint, pubKey tbls.PublicKey, signatures map[int]tbls.Signature) (uint, error) {
 	totalSig, err := tbls.ThresholdAggregate(signatures)
 	if err != nil {
 		return 0, err
@@ -49,35 +53,41 @@ func getCommonCoinResult(slot int, round int, pubKey tbls.PublicKey, signatures 
 
 	err = tbls.Verify(pubKey, sid, totalSig)
 	if err != nil {
+		log.Info(ctx, "Failed to verify aggregate signature")
 		return 0, err
 	}
 
 	return uint(totalSig[0] & 1), nil
 }
 
-// Temporary struct to send/receive messages from/to peers
-type TempABAMessage struct {
-	Id  int
-	Sig tbls.Signature
-}
+func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey,
+	privKey tbls.PrivateKey, broadcast func(CommonCoinMessage) error, receiveChannel <-chan CommonCoinMessage) (uint, error) {
 
-func SampleCoin(ctx context.Context, id int, slot int, round int, pubKey tbls.PublicKey, privateKey tbls.PrivateKey, broadcast func(int, tbls.Signature) error, receiveChannel <-chan TempABAMessage) (uint, error) {
-
-	log.Info(ctx, "Node id sampled common coin", z.Int("id", id))
+	log.Info(ctx, "Node id sampled common coin", z.Uint("id", id))
 
 	// === State ===
 	var (
-		f          int = 1 // should get F from somewhere, e.g. GetSmallQuorumSize()
-		signatures     = make(map[int]tbls.Signature)
+		f          uint = 1 // should get F from somewhere, e.g. GetSmallQuorumSize()
+		signatures      = make(map[int]tbls.Signature)
 	)
 
+	coinName, err := getCommonCoinName(slot, round)
+	if err != nil {
+		return 0, err
+	}
+
 	{
-		signature, err := getCommonCoinNameSigned(slot, round, privateKey)
+		signature, err := getCommonCoinNameSigned(slot, round, privKey)
 		if err != nil {
 			return 0, err
 		}
-		signatures[id] = signature
-		err = broadcast(id, signature)
+		signatures[int(id)] = signature
+		err = broadcast(CommonCoinMessage{
+			Source: uint(id),
+			Slot:   uint(slot),
+			Round:  uint(round),
+			Sig:    signature,
+		})
 		if err != nil {
 			return 0, err
 		}
@@ -87,18 +97,25 @@ func SampleCoin(ctx context.Context, id int, slot int, round int, pubKey tbls.Pu
 		select {
 		case msg := <-receiveChannel:
 
-			log.Info(ctx, "Node id received signature from source", z.Int("id", id), z.Int("source", msg.Id))
+			log.Info(ctx, "Node id received signature from source", z.Uint("id", id), z.Uint("source", msg.Source))
 
-			signatures[msg.Id] = msg.Sig
+			// verify signature validity
+			err := tbls.Verify(pubKeys[msg.Source], coinName, msg.Sig)
+			if err != nil {
+				log.Info(ctx, "Node id received invalid signature from source", z.Uint("id", id), z.Uint("source", msg.Source))
+				continue
+			}
 
-			if len(signatures) >= f+1 {
+			signatures[int(msg.Source)] = msg.Sig
 
-				result, err := getCommonCoinResult(slot, round, pubKey, signatures)
+			if len(signatures) >= int(f)+1 {
+
+				result, err := getCommonCoinResult(ctx, slot, round, pubKey, signatures)
 				if err != nil {
 					continue
 				}
 
-				log.Info(ctx, "Node id decided value", z.Int("id", id), z.Uint("value", result))
+				log.Info(ctx, "Node id decided value", z.Uint("id", id), z.Uint("value", result))
 
 				return result, nil
 			}
