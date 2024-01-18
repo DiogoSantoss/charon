@@ -3,6 +3,8 @@ package aba
 import (
 	"context"
 
+	"github.com/obolnetwork/charon/app/log"
+	"github.com/obolnetwork/charon/app/z"
 	"github.com/obolnetwork/charon/tbls"
 )
 
@@ -62,43 +64,49 @@ func (r UponRule) String() string {
 }
 
 type ABAMessage struct {
-	msgType    MsgType
-	source     uint
-	estimative uint
-	values     []uint
-	round      uint
+	MsgType    MsgType
+	Source     uint
+	Estimative uint
+	Values     map[uint]struct{}
+	Round      uint
 }
 
 // Returns the triggered upon rule by the received message
-func classify(msg ABAMessage, receivedInit []ABAMessage, receivedAux []ABAMessage, receivedConf []ABAMessage, receivedFinish []ABAMessage) UponRule {
+func classify(msg ABAMessage, values map[uint]struct{}, receivedInit map[uint][]ABAMessage, receivedAux map[uint][]ABAMessage, receivedConf map[uint][]ABAMessage, receivedFinish map[uint][]ABAMessage) UponRule {
 
-	// TODO: get f from somewhere
+	// TODO: get these consts from somewhere
 	f := 1
 	n := 3*f + 1
 	smallQuorum := f + 1
 	bigQuorum := 2*f + 1
 
-	switch msg.msgType {
+	switch msg.MsgType {
 	case MsgInit:
-		if len(receivedInit) >= bigQuorum {
+		inits := filterByRoundAndValue(flatten(receivedInit), msg.Round, msg.Estimative)
+		if len(inits) >= bigQuorum {
 			return UponStrongSupportInit
-		} else if len(receivedInit) >= smallQuorum {
+		} else if len(inits) >= smallQuorum {
 			return UponWeakSupportInit
 		}
 	case MsgAux:
-		if len(receivedAux) >= n-f {
+		auxs := filterByRoundAndValues(flatten(receivedAux), msg.Round, setToArray(values))
+		if len(auxs) >= n-f {
 			return UponSupportAux
 		}
 	case MsgConf:
-		if len(receivedConf) >= n-f {
+		confs := filterByRoundAndSubsetValues(flatten(receivedConf), msg.Round, values)
+		if len(confs) >= n-f {
 			return UponSupportConf
 		}
 	case MsgFinish:
-		if len(receivedFinish) >= bigQuorum {
+		finishes := filterByValue(flatten(receivedFinish), msg.Estimative)
+		if len(finishes) >= bigQuorum {
 			return UponStrongSupportFinish
-		} else if len(receivedInit) >= smallQuorum {
+		} else if len(finishes) >= smallQuorum {
 			return UponWeakSupportFinish
 		}
+	default:
+		panic("bug: invalid message type")
 	}
 
 	return UponNothing
@@ -107,13 +115,19 @@ func classify(msg ABAMessage, receivedInit []ABAMessage, receivedAux []ABAMessag
 func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey, valueInput uint, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
 	broadcastCommonCoin func(CommonCoinMessage) error, receiveChannelCommonCoin <-chan CommonCoinMessage) (uint, error) {
 
+	ctx = log.WithTopic(ctx, "aba")
+
+	log.Info(ctx, "Node id starting ABA", z.Uint("id", id))
+
 	// === State ===
 	var (
 		round                    uint = 0
 		estimative                    = make(map[uint]uint)
-		values                        = make(map[uint][]uint)
+		values                        = make(map[uint]map[uint]struct{})
+		coinResult                    = make(map[uint]uint)
+		alreadyBroadcastedInit        = make(map[uint]bool)
 		alreadyBroadcastedAux         = make(map[uint]bool)
-		alreadyBroadcastedFinish      = make(map[uint]bool)
+		alreadyBroadcastedFinish bool = false
 		receivedInit                  = make(map[uint][]ABAMessage)
 		receivedAux                   = make(map[uint][]ABAMessage)
 		receivedConf                  = make(map[uint][]ABAMessage)
@@ -121,30 +135,32 @@ func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubK
 	)
 
 	storeMessage := func(msg ABAMessage) {
-		switch msg.msgType {
+		switch msg.MsgType {
 		case MsgInit:
-			receivedInit[msg.source] = append(receivedInit[msg.source], msg)
+			receivedInit[msg.Source] = append(receivedInit[msg.Source], msg)
 		case MsgAux:
-			receivedAux[msg.source] = append(receivedAux[msg.source], msg)
+			receivedAux[msg.Source] = append(receivedAux[msg.Source], msg)
 		case MsgConf:
-			receivedConf[msg.source] = append(receivedAux[msg.source], msg)
+			receivedConf[msg.Source] = append(receivedAux[msg.Source], msg)
 		case MsgFinish:
-			receivedFinish[msg.source] = append(receivedFinish[msg.source], msg)
+			receivedFinish[msg.Source] = append(receivedFinish[msg.Source], msg)
 		default:
-
+			panic("bug: invalid message type")
 		}
 	}
 
-	// === Algorithm ===
+	alreadyBroadcastedInit[round] = true
+	values[round] = make(map[uint]struct{})
 
+	// === Algorithm ===
 	estimative[round] = valueInput // Algorithm 1:3
 
 	{ // Algorithm 1:4
 		err := broadcast(ABAMessage{
-			msgType:    MsgInit,
-			source:     id,
-			estimative: estimative[round],
-			round:      round,
+			MsgType:    MsgInit,
+			Source:     id,
+			Estimative: estimative[round],
+			Round:      round,
 		})
 		if err != nil {
 			return 0, err
@@ -158,75 +174,92 @@ func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubK
 			// TODO: verify message validity
 			storeMessage(msg)
 
-			rule := classify(msg, receivedInit[msg.round], receivedAux[msg.round], receivedConf[msg.round], receivedFinish[msg.round])
+			rule := classify(msg, values[msg.Round], receivedInit, receivedAux, receivedConf, receivedFinish)
 			if rule == UponNothing {
 				break
 			}
 
 			switch rule {
-
 			case UponWeakSupportFinish: // Algorithm 1:1
-				if alreadyBroadcastedFinish[msg.round] == false {
-					alreadyBroadcastedFinish[msg.round] = true
-					msg.source = id
+				if alreadyBroadcastedFinish == false {
+					alreadyBroadcastedFinish = true
+					msg.Source = id
 					err := broadcast(msg)
 					if err != nil {
 						return 0, err
 					}
 				}
 
-			case UponStrongSupportFinish: // Algorithm 1:2TempABAMessage
-				return msg.estimative, nil
+			case UponStrongSupportFinish: // Algorithm 1:2
+				log.Info(ctx, "Node id in round r decided value", z.Uint("id", id), z.Uint("r", msg.Round), z.Uint("value", msg.Estimative))
+				return msg.Estimative, nil
 
 			case UponWeakSupportInit: // Algorithm 1:5
-				msg.source = id
+				msg.Source = id
 				err := broadcast(msg)
 				if err != nil {
 					return 0, err
 				}
-				// should verify if already broadcast this init message ?
 
 			case UponStrongSupportInit: // Algorithm 1:6
-				values[msg.round] = append(values[msg.round], msg.estimative)
-				if alreadyBroadcastedAux[msg.round] == false {
-					alreadyBroadcastedAux[msg.round] = true
+				values[msg.Round][msg.Estimative] = struct{}{}
+				if alreadyBroadcastedAux[msg.Round] == false {
+					alreadyBroadcastedAux[msg.Round] = true
 					err := broadcast(ABAMessage{
-						msgType:    MsgAux,
-						source:     id,
-						estimative: msg.estimative,
-						round:      msg.round,
+						MsgType:    MsgAux,
+						Source:     id,
+						Estimative: msg.Estimative,
+						Round:      msg.Round,
 					})
 					if err != nil {
 						return 0, err
 					}
 				}
+
 			case UponSupportAux: // Algorithm 1:7
 				err := broadcast(ABAMessage{
-					msgType: MsgConf,
-					source:  id,
-					values:  values[msg.round],
-					round:   msg.round,
+					MsgType: MsgConf,
+					Source:  id,
+					Values:  values[msg.Round],
+					Round:   msg.Round,
 				})
 				if err != nil {
 					return 0, err
 				}
+
 			case UponSupportConf: // Algorithm 1:8
-				sr, err := SampleCoin(ctx, id, slot, msg.round, pubKey, pubKeys, privKey, broadcastCommonCoin, receiveChannelCommonCoin) // Algorithm 1:9
-				if err != nil {
-					return 0, err
+
+				sr, exists := coinResult[msg.Round]
+				if !exists {
+					coinValue, err := SampleCoin(ctx, id, slot, msg.Round, pubKey, pubKeys, privKey, broadcastCommonCoin, receiveChannelCommonCoin) // Algorithm 1:9
+					if err != nil {
+						return 0, err
+					}
+					sr = coinValue
+					coinResult[msg.Round] = coinValue
 				}
 
 				//Algorithm 1:10
-				if len(values[msg.round]) == 2 {
-					estimative[msg.round+1] = sr
-				} else if len(values[msg.round]) == 1 {
-					estimative[msg.round+1] = values[msg.round][0]
-					if (values[msg.round][0] == sr) && (alreadyBroadcastedFinish[msg.round] == false) {
-						alreadyBroadcastedFinish[msg.round] = true
+				if len(values[msg.Round]) == 2 {
+					estimative[msg.Round+1] = sr
+					log.Info(ctx, "Node id in round r has two values", z.Uint("id", id), z.Uint("r", msg.Round))
+
+				} else if len(values[msg.Round]) == 1 {
+					var value uint
+					for k := range values[msg.Round] {
+						value = k
+					}
+
+					estimative[msg.Round+1] = value
+
+					if (value == sr) && (alreadyBroadcastedFinish == false) {
+						log.Info(ctx, "Node id in round r has value matching with coin", z.Uint("id", id), z.Uint("r", msg.Round), z.Uint("value", value), z.Uint("coin", sr))
+						alreadyBroadcastedFinish = true
 						err := broadcast(ABAMessage{
-							msgType:    MsgFinish,
-							source:     id,
-							estimative: sr,
+							MsgType:    MsgFinish,
+							Source:     id,
+							Estimative: sr,
+							Round:      msg.Round,
 						})
 						if err != nil {
 							return 0, err
@@ -234,18 +267,129 @@ func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubK
 					}
 				}
 
-				// Equivalent to "return to step 4"
-				round++
-				err = broadcast(ABAMessage{
-					msgType:    MsgInit,
-					source:     id,
-					estimative: estimative[round],
-					round:      round,
-				})
-				if err != nil {
-					return 0, err
+				// Equivalent to "return to step 4" in Algorithm 1:10
+				next_round := msg.Round + 1
+
+				if alreadyBroadcastedInit[next_round] == false {
+
+					// TODO: I am not sure of this "round += 1"
+					/*
+						we may be round 1
+						receive a message from round 3
+						should we skip round 2 and 3? i dont think so
+						maybe send init for round 3+1
+						but locally go to round 2
+
+						not sure, algorithm does not say
+
+						maybe this example is not even possible, need to
+						check more carefully
+					*/
+					round += 1
+
+					alreadyBroadcastedInit[next_round] = true
+					values[next_round] = make(map[uint]struct{})
+
+					log.Info(ctx, "Node id starting new round", z.Uint("id", id), z.Uint("round", round))
+					err := broadcast(ABAMessage{
+						MsgType:    MsgInit,
+						Source:     id,
+						Estimative: estimative[round],
+						Round:      next_round,
+					})
+					if err != nil {
+						return 0, err
+					}
+				}
+
+			}
+		}
+	}
+}
+
+// Create an array from a set
+func setToArray(s map[uint]struct{}) []uint {
+	result := make([]uint, 0)
+	for k := range s {
+		result = append(result, k)
+	}
+	return result
+}
+
+// Transforms a map of arrays into a single array
+func flatten(m map[uint][]ABAMessage) []ABAMessage {
+	result := make([]ABAMessage, 0)
+	for _, msgs := range m {
+		for _, msg := range msgs {
+			result = append(result, msg)
+		}
+	}
+	return result
+}
+
+// Filters messages by round
+func filterByRound(msgs []ABAMessage, round uint) []ABAMessage {
+	result := make([]ABAMessage, 0)
+	for _, msg := range msgs {
+		if msg.Round == round {
+			result = append(result, msg)
+		}
+	}
+	return result
+}
+
+func filterByValue(msgs []ABAMessage, value uint) []ABAMessage {
+	result := make([]ABAMessage, 0)
+	for _, msg := range msgs {
+		if msg.Estimative == value {
+			result = append(result, msg)
+		}
+	}
+	return result
+}
+
+// Filters messages by round and value
+func filterByRoundAndValue(msgs []ABAMessage, round uint, value uint) []ABAMessage {
+	result := make([]ABAMessage, 0)
+	for _, msg := range msgs {
+		if msg.Round == round && msg.Estimative == value {
+			result = append(result, msg)
+		}
+	}
+	return result
+}
+
+// Filters messages by round and values. Returned messages have an estimative that is in the values array
+func filterByRoundAndValues(msgs []ABAMessage, round uint, values []uint) []ABAMessage {
+	result := make([]ABAMessage, 0)
+	for _, msg := range msgs {
+		if msg.Round == round {
+			for _, value := range values {
+				if msg.Estimative == value {
+					result = append(result, msg)
 				}
 			}
 		}
 	}
+	return result
+}
+
+// Filters messages by round and values. Returned messages have a values set that is a subset of values
+func filterByRoundAndSubsetValues(msgs []ABAMessage, round uint, values map[uint]struct{}) []ABAMessage {
+	result := make([]ABAMessage, 0)
+	for _, msg := range msgs {
+		if msg.Round == round {
+			isSubset := true
+			for value := range msg.Values {
+				if _, exists := values[value]; !exists {
+					isSubset = false
+					break
+				}
+			}
+			if isSubset {
+				result = append(result, msg)
+			}
+		}
+	}
+	return result
 }

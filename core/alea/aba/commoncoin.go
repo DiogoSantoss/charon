@@ -53,7 +53,7 @@ func getCommonCoinResult(ctx context.Context, slot uint, round uint, pubKey tbls
 
 	err = tbls.Verify(pubKey, sid, totalSig)
 	if err != nil {
-		log.Info(ctx, "Failed to verify aggregate signature")
+		log.Info(ctx, "[COIN] Failed to verify aggregate signature")
 		return 0, err
 	}
 
@@ -63,7 +63,9 @@ func getCommonCoinResult(ctx context.Context, slot uint, round uint, pubKey tbls
 func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey,
 	privKey tbls.PrivateKey, broadcast func(CommonCoinMessage) error, receiveChannel <-chan CommonCoinMessage) (uint, error) {
 
-	log.Info(ctx, "Node id sampled common coin", z.Uint("id", id))
+	ctx = log.WithTopic(ctx, "commoncoin")
+
+	log.Info(ctx, "Node id in round r sampled common coin", z.Uint("id", id), z.Uint("r", round))
 
 	// === State ===
 	var (
@@ -81,11 +83,12 @@ func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls
 		if err != nil {
 			return 0, err
 		}
-		signatures[int(id)] = signature
+		// TODO: Should i avoid sending to myself?
+		//signatures[int(id)] = signature
 		err = broadcast(CommonCoinMessage{
-			Source: uint(id),
-			Slot:   uint(slot),
-			Round:  uint(round),
+			Source: id,
+			Slot:   slot,
+			Round:  round,
 			Sig:    signature,
 		})
 		if err != nil {
@@ -97,12 +100,15 @@ func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls
 		select {
 		case msg := <-receiveChannel:
 
-			log.Info(ctx, "Node id received signature from source", z.Uint("id", id), z.Uint("source", msg.Source))
+			// ignore messages from other rounds
+			if msg.Round != round {
+				continue
+			}
 
 			// verify signature validity
 			err := tbls.Verify(pubKeys[msg.Source], coinName, msg.Sig)
 			if err != nil {
-				log.Info(ctx, "Node id received invalid signature from source", z.Uint("id", id), z.Uint("source", msg.Source))
+				log.Info(ctx, "Node id with round r received invalid signature from source", z.Uint("id", id), z.Uint("source", msg.Source), z.Uint("r", round))
 				continue
 			}
 
@@ -115,7 +121,7 @@ func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls
 					continue
 				}
 
-				log.Info(ctx, "Node id decided value", z.Uint("id", id), z.Uint("value", result))
+				log.Info(ctx, "Node id in round r decided value", z.Uint("id", id), z.Uint("value", result), z.Uint("r", round))
 
 				return result, nil
 			}
