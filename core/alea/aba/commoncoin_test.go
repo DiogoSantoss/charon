@@ -13,7 +13,7 @@ import (
 
 func TestCommonCoin(t *testing.T) {
 	t.Run("happy 0", func(t *testing.T) {
-		testCommonCoin(t, test{
+		testCommonCoin(t, testParametersCoin{
 			Round:      0,
 			StartDelay: nil,
 			Slot:       0,
@@ -21,7 +21,7 @@ func TestCommonCoin(t *testing.T) {
 	})
 
 	t.Run("happy 1", func(t *testing.T) {
-		testCommonCoin(t, test{
+		testCommonCoin(t, testParametersCoin{
 			Round:      0,
 			StartDelay: nil,
 			Slot:       1,
@@ -29,7 +29,7 @@ func TestCommonCoin(t *testing.T) {
 	})
 
 	t.Run("stagger start", func(t *testing.T) {
-		testCommonCoin(t, test{
+		testCommonCoin(t, testParametersCoin{
 			Round: 0,
 			StartDelay: map[int64]time.Duration{
 				1: 1 * time.Second * 0,
@@ -42,7 +42,7 @@ func TestCommonCoin(t *testing.T) {
 	})
 
 	t.Run("one dead", func(t *testing.T) {
-		testCommonCoin(t, test{
+		testCommonCoin(t, testParametersCoin{
 			Round: 0,
 			DeadNodes: map[int64]bool{
 				1: true,
@@ -52,7 +52,7 @@ func TestCommonCoin(t *testing.T) {
 	})
 
 	t.Run("faulty signature", func(t *testing.T) {
-		testCommonCoin(t, test{
+		testCommonCoin(t, testParametersCoin{
 			Round: 0,
 			StartDelay: map[int64]time.Duration{
 				1: 1 * time.Second * 0,
@@ -68,7 +68,7 @@ func TestCommonCoin(t *testing.T) {
 	})
 }
 
-type test struct {
+type testParametersCoin struct {
 	Round      uint
 	Slot       uint
 	StartDelay map[int64]time.Duration
@@ -76,7 +76,7 @@ type test struct {
 	FaultySig  map[int64]bool
 }
 
-func testCommonCoin(t *testing.T, test test) {
+func testCommonCoin(t *testing.T, test testParametersCoin) {
 
 	secret, _ := tbls.GenerateSecretKey()
 	public, _ := tbls.SecretToPublicKey(secret)
@@ -85,7 +85,7 @@ func testCommonCoin(t *testing.T, test test) {
 	const f = 1
 	const n = 3*f + 1
 
-	// generate private key shares and corresponding public keys
+	// Generate private key shares and corresponding public keys
 	shares, _ := tbls.ThresholdSplit(secret, n, f+1)
 	pubKeys := make(map[uint]tbls.PublicKey)
 	for i, share := range shares {
@@ -93,19 +93,19 @@ func testCommonCoin(t *testing.T, test test) {
 	}
 
 	channels := make([]chan CommonCoinMessage, n)
-
-	// send message to all channels except the sender
 	broadcast := func(msg CommonCoinMessage) error {
-		for i, channel := range channels {
-			if i+1 == int(msg.Source) {
-				continue
-			}
+		for _, channel := range channels {
 			channel <- msg
 		}
 		return nil
 	}
 
-	// store results
+	// Create channels
+	for i := 0; i < n; i++ {
+		channels[i] = make(chan CommonCoinMessage, n)
+	}
+
+	// Store results
 	resultChan := make(chan uint)
 	resultsList := make([]uint, 0)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -116,11 +116,10 @@ func testCommonCoin(t *testing.T, test test) {
 	// since they may never finish
 	wg.Add(n - len(test.FaultySig))
 	
-	// spawn go routines to participate in protocol
+	// Spawn go routines to participate in protocol
 	for i := 0; i < n; i++ {
 
 		id := i + 1
-		channels[i] = make(chan CommonCoinMessage, n)
 
 		go func(i int) {
 			defer wg.Done()
@@ -168,15 +167,15 @@ func testCommonCoin(t *testing.T, test test) {
 
 	require.Condition(t, func() (success bool) {
 
-		if len(resultsList) > 0 {
-			firstResult := resultsList[0]
-			for _, res := range resultsList {
-				if res != firstResult {
-					return false
-				}
-			}
-		} else {
+		if len(resultsList) <= 0 {
 			return false
+		}
+
+		firstResult := resultsList[0]
+		for _, res := range resultsList {
+			if res != firstResult {
+				return false
+			}
 		}
 
 		return true

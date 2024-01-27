@@ -327,17 +327,7 @@ func flatten(m map[uint][]ABAMessage) []ABAMessage {
 	return result
 }
 
-// Filters messages by round
-func filterByRound(msgs []ABAMessage, round uint) []ABAMessage {
-	result := make([]ABAMessage, 0)
-	for _, msg := range msgs {
-		if msg.Round == round {
-			result = append(result, msg)
-		}
-	}
-	return result
-}
-
+// Filters messages by value
 func filterByValue(msgs []ABAMessage, value uint) []ABAMessage {
 	result := make([]ABAMessage, 0)
 	for _, msg := range msgs {
