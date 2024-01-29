@@ -106,8 +106,8 @@ func testCommonCoin(t *testing.T, test testParametersCoin) {
 	}
 
 	// Store results
-	resultChan := make(chan uint)
-	resultsList := make([]uint, 0)
+	resultChan := make(chan byte)
+	resultsList := make([]byte, 0)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

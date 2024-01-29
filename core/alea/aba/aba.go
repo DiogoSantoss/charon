@@ -66,13 +66,13 @@ func (r UponRule) String() string {
 type ABAMessage struct {
 	MsgType    MsgType
 	Source     uint
-	Estimative uint
-	Values     map[uint]struct{}
+	Estimative byte
+	Values     map[byte]struct{}
 	Round      uint
 }
 
 // Returns the triggered upon rule by the received message
-func classify(msg ABAMessage, values map[uint]struct{}, receivedInit map[uint][]ABAMessage, receivedAux map[uint][]ABAMessage, receivedConf map[uint][]ABAMessage, receivedFinish map[uint][]ABAMessage) UponRule {
+func classify(msg ABAMessage, values map[byte]struct{}, receivedInit map[uint][]ABAMessage, receivedAux map[uint][]ABAMessage, receivedConf map[uint][]ABAMessage, receivedFinish map[uint][]ABAMessage) UponRule {
 
 	// TODO: get these consts from somewhere
 	f := 1
@@ -112,8 +112,8 @@ func classify(msg ABAMessage, values map[uint]struct{}, receivedInit map[uint][]
 	return UponNothing
 }
 
-func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey, valueInput uint, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
-	broadcastCommonCoin func(CommonCoinMessage) error, receiveChannelCommonCoin <-chan CommonCoinMessage) (uint, error) {
+func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey, valueInput byte, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
+	broadcastCommonCoin func(CommonCoinMessage) error, receiveChannelCommonCoin <-chan CommonCoinMessage) (byte, error) {
 
 	ctx = log.WithTopic(ctx, "aba")
 
@@ -122,9 +122,9 @@ func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubK
 	// === State ===
 	var (
 		round                    uint = 0
-		estimative                    = make(map[uint]uint)
-		values                        = make(map[uint]map[uint]struct{})
-		coinResult                    = make(map[uint]uint)
+		estimative                    = make(map[uint]byte)
+		values                        = make(map[uint]map[byte]struct{})
+		coinResult                    = make(map[uint]byte)
 		alreadyBroadcastedInit        = make(map[uint]bool)
 		alreadyBroadcastedAux         = make(map[uint]bool)
 		alreadyBroadcastedFinish bool = false
@@ -150,7 +150,7 @@ func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubK
 	}
 
 	alreadyBroadcastedInit[round] = true
-	values[round] = make(map[uint]struct{})
+	values[round] = make(map[byte]struct{})
 
 	// === Algorithm ===
 	estimative[round] = valueInput // Algorithm 1:3
@@ -191,7 +191,7 @@ func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubK
 				}
 
 			case UponStrongSupportFinish: // Algorithm 1:2
-				log.Info(ctx, "Node id in round r decided value", z.Uint("id", id), z.Uint("r", msg.Round), z.Uint("value", msg.Estimative))
+				log.Info(ctx, "Node id in round r decided value", z.Uint("id", id), z.Uint("r", msg.Round), z.U8("value", msg.Estimative))
 				return msg.Estimative, nil
 
 			case UponWeakSupportInit: // Algorithm 1:5
@@ -245,7 +245,7 @@ func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubK
 					log.Info(ctx, "Node id in round r has two values", z.Uint("id", id), z.Uint("r", msg.Round))
 
 				} else if len(values[msg.Round]) == 1 {
-					var value uint
+					var value byte
 					for k := range values[msg.Round] {
 						value = k
 					}
@@ -253,7 +253,7 @@ func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubK
 					estimative[msg.Round+1] = value
 
 					if (value == sr) && (alreadyBroadcastedFinish == false) {
-						log.Info(ctx, "Node id in round r has value matching with coin", z.Uint("id", id), z.Uint("r", msg.Round), z.Uint("value", value), z.Uint("coin", sr))
+						log.Info(ctx, "Node id in round r has value matching with coin", z.Uint("id", id), z.Uint("r", msg.Round), z.U8("value", value), z.U8("coin", sr))
 						alreadyBroadcastedFinish = true
 						err := broadcast(ABAMessage{
 							MsgType:    MsgFinish,
@@ -288,7 +288,7 @@ func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubK
 					round += 1
 
 					alreadyBroadcastedInit[next_round] = true
-					values[next_round] = make(map[uint]struct{})
+					values[next_round] = make(map[byte]struct{})
 
 					log.Info(ctx, "Node id starting new round", z.Uint("id", id), z.Uint("round", round))
 					err := broadcast(ABAMessage{
@@ -308,8 +308,8 @@ func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubK
 }
 
 // Create an array from a set
-func setToArray(s map[uint]struct{}) []uint {
-	result := make([]uint, 0)
+func setToArray(s map[byte]struct{}) []byte {
+	result := make([]byte, 0)
 	for k := range s {
 		result = append(result, k)
 	}
@@ -328,7 +328,7 @@ func flatten(m map[uint][]ABAMessage) []ABAMessage {
 }
 
 // Filters messages by value
-func filterByValue(msgs []ABAMessage, value uint) []ABAMessage {
+func filterByValue(msgs []ABAMessage, value byte) []ABAMessage {
 	result := make([]ABAMessage, 0)
 	for _, msg := range msgs {
 		if msg.Estimative == value {
@@ -339,7 +339,7 @@ func filterByValue(msgs []ABAMessage, value uint) []ABAMessage {
 }
 
 // Filters messages by round and value
-func filterByRoundAndValue(msgs []ABAMessage, round uint, value uint) []ABAMessage {
+func filterByRoundAndValue(msgs []ABAMessage, round uint, value byte) []ABAMessage {
 	result := make([]ABAMessage, 0)
 	for _, msg := range msgs {
 		if msg.Round == round && msg.Estimative == value {
@@ -350,7 +350,7 @@ func filterByRoundAndValue(msgs []ABAMessage, round uint, value uint) []ABAMessa
 }
 
 // Filters messages by round and values. Returned messages have an estimative that is in the values array
-func filterByRoundAndValues(msgs []ABAMessage, round uint, values []uint) []ABAMessage {
+func filterByRoundAndValues(msgs []ABAMessage, round uint, values []byte) []ABAMessage {
 	result := make([]ABAMessage, 0)
 	for _, msg := range msgs {
 		if msg.Round == round {
@@ -365,7 +365,7 @@ func filterByRoundAndValues(msgs []ABAMessage, round uint, values []uint) []ABAM
 }
 
 // Filters messages by round and values. Returned messages have a values set that is a subset of values
-func filterByRoundAndSubsetValues(msgs []ABAMessage, round uint, values map[uint]struct{}) []ABAMessage {
+func filterByRoundAndSubsetValues(msgs []ABAMessage, round uint, values map[byte]struct{}) []ABAMessage {
 	result := make([]ABAMessage, 0)
 	for _, msg := range msgs {
 		if msg.Round == round {

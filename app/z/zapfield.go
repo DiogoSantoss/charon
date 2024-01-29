@@ -82,6 +82,13 @@ func U64(key string, val uint64) Field {
 	}
 }
 
+// U8 returns a wrapped zap uint8 field.
+func U8(key string, val uint8) Field {
+	return func(add func(zap.Field)) {
+		add(zap.Uint8(key, val))
+	}
+}
+
 // Hex returns a wrapped zap hex field.
 func Hex(key string, val []byte) Field {
 	return func(add func(zap.Field)) {

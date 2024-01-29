@@ -15,7 +15,7 @@ func TestABA(t *testing.T) {
 	t.Run("happy 0", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Slot: 0,
-			InputValue: map[uint]uint{
+			InputValue: map[uint]byte{
 				1: 1,
 				2: 1,
 				3: 1,
@@ -30,7 +30,7 @@ func TestABA(t *testing.T) {
 	t.Run("happy 1", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Slot: 1,
-			InputValue: map[uint]uint{
+			InputValue: map[uint]byte{
 				1: 0,
 				2: 0,
 				3: 0,
@@ -45,7 +45,7 @@ func TestABA(t *testing.T) {
 	t.Run("different input", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Slot: 0,
-			InputValue: map[uint]uint{
+			InputValue: map[uint]byte{
 				1: 1,
 				2: 0,
 				3: 1,
@@ -60,7 +60,7 @@ func TestABA(t *testing.T) {
 	t.Run("stagger start", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Slot: 0,
-			InputValue: map[uint]uint{
+			InputValue: map[uint]byte{
 				1: 1,
 				2: 1,
 				3: 1,
@@ -80,7 +80,7 @@ func TestABA(t *testing.T) {
 	t.Run("one dead", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Slot: 0,
-			InputValue: map[uint]uint{
+			InputValue: map[uint]byte{
 				1: 1,
 				2: 1,
 				3: 1,
@@ -97,7 +97,7 @@ func TestABA(t *testing.T) {
 	t.Run("faulty signature", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Slot: 0,
-			InputValue: map[uint]uint{
+			InputValue: map[uint]byte{
 				1: 1,
 				2: 1,
 				3: 1,
@@ -119,7 +119,7 @@ func TestABA(t *testing.T) {
 
 type testParametersABA struct {
 	Slot       uint
-	InputValue map[uint]uint
+	InputValue map[uint]byte
 	StartDelay map[uint]time.Duration
 	DeadNodes  map[uint]bool
 	FaultySig  map[uint]bool
@@ -166,8 +166,8 @@ func testABA(t *testing.T, params testParametersABA) {
 	}
 
 	// Store results
-	resultChan := make(chan uint)
-	resultsList := make([]uint, 0)
+	resultChan := make(chan byte)
+	resultsList := make([]byte, 0)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

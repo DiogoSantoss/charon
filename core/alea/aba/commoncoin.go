@@ -40,7 +40,7 @@ func getCommonCoinNameSigned(slot uint, round uint, privateKey tbls.PrivateKey) 
 }
 
 // GetCommonCoinResult returns the coin result by threshold aggregating the signatures
-func getCommonCoinResult(ctx context.Context, slot uint, round uint, pubKey tbls.PublicKey, signatures map[int]tbls.Signature) (uint, error) {
+func getCommonCoinResult(ctx context.Context, slot uint, round uint, pubKey tbls.PublicKey, signatures map[int]tbls.Signature) (byte, error) {
 	totalSig, err := tbls.ThresholdAggregate(signatures)
 	if err != nil {
 		return 0, err
@@ -57,11 +57,11 @@ func getCommonCoinResult(ctx context.Context, slot uint, round uint, pubKey tbls
 		return 0, err
 	}
 
-	return uint(totalSig[0] & 1), nil
+	return totalSig[0] & 1, nil
 }
 
 func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey,
-	privKey tbls.PrivateKey, broadcast func(CommonCoinMessage) error, receiveChannel <-chan CommonCoinMessage) (uint, error) {
+	privKey tbls.PrivateKey, broadcast func(CommonCoinMessage) error, receiveChannel <-chan CommonCoinMessage) (byte, error) {
 
 	ctx = log.WithTopic(ctx, "commoncoin")
 
@@ -120,7 +120,7 @@ func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls
 					continue
 				}
 
-				log.Info(ctx, "Node id in round r decided value", z.Uint("id", id), z.Uint("value", result), z.Uint("r", round))
+				log.Info(ctx, "Node id in round r decided value", z.Uint("id", id), z.U8("value", result), z.Uint("r", round))
 
 				return result, nil
 			}
