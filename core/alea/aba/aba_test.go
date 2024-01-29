@@ -23,6 +23,7 @@ func TestABA(t *testing.T) {
 			},
 			StartDelay: nil,
 			DeadNodes:  nil,
+			FaultySig: nil,
 		})
 	})
 
@@ -37,6 +38,7 @@ func TestABA(t *testing.T) {
 			},
 			StartDelay: nil,
 			DeadNodes:  nil,
+			FaultySig: nil,
 		})
 	})
 
@@ -51,6 +53,7 @@ func TestABA(t *testing.T) {
 			},
 			StartDelay: nil,
 			DeadNodes:  nil,
+			FaultySig: nil,
 		})
 	})
 
@@ -70,6 +73,46 @@ func TestABA(t *testing.T) {
 				4: 1 * time.Second * 3,
 			},
 			DeadNodes: nil,
+			FaultySig: nil,
+		})
+	})
+
+	t.Run("one dead", func(t *testing.T) {
+		testABA(t, testParametersABA{
+			Slot: 0,
+			InputValue: map[uint]uint{
+				1: 1,
+				2: 1,
+				3: 1,
+				4: 1,
+			},
+			StartDelay: nil,
+			DeadNodes: map[uint]bool{
+				1: true,
+			},
+			FaultySig: nil,
+		})
+	})
+
+	t.Run("faulty signature", func(t *testing.T) {
+		testABA(t, testParametersABA{
+			Slot: 0,
+			InputValue: map[uint]uint{
+				1: 1,
+				2: 1,
+				3: 1,
+				4: 1,
+			},
+			StartDelay: map[uint]time.Duration{
+				1: 1 * time.Second * 0,
+				2: 1 * time.Second * 1,
+				3: 1 * time.Second * 4,
+				4: 1 * time.Second * 5,
+			},
+			DeadNodes: nil,
+			FaultySig: map[uint]bool{
+				1: true,
+			},
 		})
 	})
 }
@@ -79,6 +122,7 @@ type testParametersABA struct {
 	InputValue map[uint]uint
 	StartDelay map[uint]time.Duration
 	DeadNodes  map[uint]bool
+	FaultySig  map[uint]bool
 }
 
 func testABA(t *testing.T, params testParametersABA) {
@@ -141,6 +185,21 @@ func testABA(t *testing.T, params testParametersABA) {
 			if params.StartDelay != nil {
 				if delay, ok := params.StartDelay[uint(id)]; ok {
 					time.Sleep(delay)
+				}
+			}
+
+			if params.DeadNodes != nil {
+				if _, ok := params.DeadNodes[uint(id)]; ok {
+					t.Logf("node %d is dead", id)
+					return
+				}
+			}
+
+			if params.FaultySig != nil {
+				if _, ok := params.FaultySig[uint(id)]; ok {
+					t.Logf("node %d has faulty signature", id)
+					secret, _ := tbls.GenerateSecretKey()
+					shares[id] = secret
 				}
 			}
 

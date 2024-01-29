@@ -84,7 +84,6 @@ func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls
 			return 0, err
 		}
 		// TODO: Should i avoid sending to myself?
-		//signatures[int(id)] = signature
 		err = broadcast(CommonCoinMessage{
 			Source: id,
 			Slot:   slot,

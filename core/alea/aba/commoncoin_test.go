@@ -31,7 +31,7 @@ func TestCommonCoin(t *testing.T) {
 	t.Run("stagger start", func(t *testing.T) {
 		testCommonCoin(t, testParametersCoin{
 			Round: 0,
-			StartDelay: map[int64]time.Duration{
+			StartDelay: map[uint]time.Duration{
 				1: 1 * time.Second * 0,
 				2: 1 * time.Second * 1,
 				3: 1 * time.Second * 2,
@@ -44,7 +44,7 @@ func TestCommonCoin(t *testing.T) {
 	t.Run("one dead", func(t *testing.T) {
 		testCommonCoin(t, testParametersCoin{
 			Round: 0,
-			DeadNodes: map[int64]bool{
+			DeadNodes: map[uint]bool{
 				1: true,
 			},
 			Slot: 1,
@@ -54,13 +54,13 @@ func TestCommonCoin(t *testing.T) {
 	t.Run("faulty signature", func(t *testing.T) {
 		testCommonCoin(t, testParametersCoin{
 			Round: 0,
-			StartDelay: map[int64]time.Duration{
+			StartDelay: map[uint]time.Duration{
 				1: 1 * time.Second * 0,
 				2: 1 * time.Second * 1,
 				3: 1 * time.Second * 2,
 				4: 1 * time.Second * 3,
 			},
-			FaultySig: map[int64]bool{
+			FaultySig: map[uint]bool{
 				1: true,
 			},
 			Slot: 1,
@@ -71,9 +71,9 @@ func TestCommonCoin(t *testing.T) {
 type testParametersCoin struct {
 	Round      uint
 	Slot       uint
-	StartDelay map[int64]time.Duration
-	DeadNodes  map[int64]bool
-	FaultySig  map[int64]bool
+	StartDelay map[uint]time.Duration
+	DeadNodes  map[uint]bool
+	FaultySig  map[uint]bool
 }
 
 func testCommonCoin(t *testing.T, test testParametersCoin) {
@@ -125,20 +125,20 @@ func testCommonCoin(t *testing.T, test testParametersCoin) {
 			defer wg.Done()
 
 			if test.StartDelay != nil {
-				if delay, ok := test.StartDelay[int64(id)]; ok {
+				if delay, ok := test.StartDelay[uint(id)]; ok {
 					time.Sleep(delay)
 				}
 			}
 
 			if test.DeadNodes != nil {
-				if _, ok := test.DeadNodes[int64(id)]; ok {
+				if _, ok := test.DeadNodes[uint(id)]; ok {
 					t.Logf("node %d is dead", id)
 					return
 				}
 			}
 
 			if test.FaultySig != nil {
-				if _, ok := test.FaultySig[int64(id)]; ok {
+				if _, ok := test.FaultySig[uint(id)]; ok {
 					t.Logf("node %d has faulty signature", id)
 					secret, _ := tbls.GenerateSecretKey()
 					shares[id] = secret
