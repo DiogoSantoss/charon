@@ -117,7 +117,7 @@ func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubK
 
 	ctx = log.WithTopic(ctx, "aba")
 
-	log.Info(ctx, "Node id starting ABA", z.Uint("id", id))
+	log.Info(ctx, "Starting ABA", z.Uint("id", id))
 
 	// === State ===
 	var (
