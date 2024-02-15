@@ -124,6 +124,8 @@ func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls
 
 				return result, nil
 			}
+		case <-ctx.Done():
+			return 0, ctx.Err()
 		}
 	}
 }

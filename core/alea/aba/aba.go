@@ -303,6 +303,8 @@ func RunABA(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubK
 				}
 
 			}
+		case <-ctx.Done():
+			return 0, ctx.Err()
 		}
 	}
 }
