@@ -104,22 +104,19 @@ func classify(msg VCBCMessage) UponRule {
 	}
 }
 
-/*
+type VCBC struct {
+	subs []func(ctx context.Context, result VCBCResult) error
+}
 
-Notes:
+func NewVCBC() *VCBC {
+	return &VCBC{}
+}
 
-RunVCBC (or something else) should always be running waiting for broadcasts of other nodes.
-Unlike RunABA which can start and finish, if VCBC finished after my own broadcast then i must have a way
-to receive broadcasts from other nodes.
+func (v *VCBC) Subscribe(fn func(ctx context.Context, result VCBCResult) error) {
+	v.subs = append(v.subs, fn)
+}
 
-Another issue is related to sharing data between VCBC and ABA
-There should be a way to receive values from VCBC and them consult them in ABA
-
-When should we finish this instance ?
-
-*/
-
-func RunVCBCRequest(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey, tag string, broadcast func(VCBCMessage) error, unicast func(uint, VCBCMessage) error, receiveChannel <-chan VCBCMessage, output chan<- VCBCResult) error {
+func (v *VCBC) RunRequest(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey, tag string, broadcast func(VCBCMessage) error, unicast func(uint, VCBCMessage) error, receiveChannel <-chan VCBCMessage) error {
 
 	ctx = log.WithTopic(ctx, "vcbc-request")
 
@@ -177,9 +174,11 @@ func RunVCBCRequest(ctx context.Context, id uint, slot uint, pubKey tbls.PublicK
 				if thresholdSigByTag[msg.Content.Tag] == (tbls.Signature{}) {
 					thresholdSigByTag[msg.Content.Tag] = msg.ThresholdSig
 					log.Info(ctx, "Node id received answer", z.Uint("id", id))
-					output <- VCBCResult{
-						Tag:     msg.Content.Tag,
-						Message: msg.Message,
+					for _, sub := range v.subs {
+						sub(ctx, VCBCResult{
+							Tag:     msg.Content.Tag,
+							Message: msg.Message,
+						})
 					}
 				}
 
@@ -190,7 +189,7 @@ func RunVCBCRequest(ctx context.Context, id uint, slot uint, pubKey tbls.PublicK
 	}
 }
 
-func RunVCBC(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey, m []byte, broadcast func(VCBCMessage) error, unicast func(uint, VCBCMessage) error, receiveChannel <-chan VCBCMessage, output chan<- VCBCResult) error {
+func (v *VCBC) Run(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey, m []byte, broadcast func(VCBCMessage) error, unicast func(uint, VCBCMessage) error, receiveChannel <-chan VCBCMessage) error {
 
 	ctx = log.WithTopic(ctx, "vcbc")
 
@@ -205,7 +204,7 @@ func RunVCBC(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pub
 		hashFunction = sha256.New()
 
 		messageByTag      = make(map[string][]byte)         // Store messages received by tag
-		thresholdSigByTag = make(map[string]tbls.Signature) // Store final signature of messages
+		thresholdSigByTag = make(map[string]tbls.Signature) // Store final signature of messages by tag
 
 		partialSigsBySource = make(map[int]tbls.Signature) // Store received partial signatures of my message
 
@@ -334,9 +333,11 @@ func RunVCBC(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pub
 				// Output result
 				if slices.Compare(hash, msg.Content.MessageHash) == 0 && thresholdSigByTag[msg.Content.Tag] == (tbls.Signature{}) {
 					thresholdSigByTag[msg.Content.Tag] = msg.ThresholdSig
-					output <- VCBCResult{
-						Tag:     msg.Content.Tag,
-						Message: messageByTag[msg.Content.Tag],
+					for _, sub := range v.subs {
+						sub(ctx, VCBCResult{
+							Tag:     msg.Content.Tag,
+							Message: messageByTag[msg.Content.Tag],
+						})
 					}
 				}
 			case UponRequest:

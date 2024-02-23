@@ -124,6 +124,7 @@ type testParametersVCBC struct {
 	FaultySig  map[uint]bool
 }
 
+// Compute the total number of messages that should be received
 func (t testParametersVCBC) totalNumberMessages() int {
 	n := 0
 	for _, v := range t.InputValue {
@@ -217,14 +218,20 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 				}
 			}
 
+			v := NewVCBC()
+			v.Subscribe(func(ctx context.Context, result VCBCResult) error {
+				outputChannel <- result
+				return nil
+			})
+
 			if params.Requester != nil && params.Requester[uint(id)] {
 				tag := "ID.1." + strconv.Itoa(int(params.Slot))
-				err := RunVCBCRequest(ctx, uint(id), params.Slot, public, pubKeys, shares[id], tag, broadcast, unicast, channels[i], outputChannel)
+				err := v.RunRequest(ctx, uint(id), params.Slot, public, pubKeys, shares[id], tag, broadcast, unicast, channels[i])
 				if !receivedAll {
 					require.NoError(t, err)
 				}
 			} else {
-				err := RunVCBC(ctx, uint(id), params.Slot, public, pubKeys, shares[id], params.InputValue[uint(id)], broadcast, unicast, channels[i], outputChannel)
+				err := v.Run(ctx, uint(id), params.Slot, public, pubKeys, shares[id], params.InputValue[uint(id)], broadcast, unicast, channels[i])
 				if !receivedAll {
 					require.NoError(t, err)
 				}
