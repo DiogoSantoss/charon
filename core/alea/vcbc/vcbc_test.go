@@ -1,10 +1,9 @@
-package aba
+package vcbc
 
 import (
 	"context"
 	"math"
 	"slices"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -76,7 +75,7 @@ func TestVCBC(t *testing.T) {
 				3: []byte("Goodbye"),
 				4: []byte("Planet"),
 			},
-			Requester: nil,
+			Requester:  nil,
 			StartDelay: nil,
 			DeadNodes: map[uint]bool{
 				1: false,
@@ -181,7 +180,11 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 
 	// Functions to send messages
 	broadcast := func(msg VCBCMessage) error {
-		for _, channel := range channels {
+		for i, channel := range channels {
+			// Don't send final to requester to simulate lack of final message
+			if msg.Content.MsgType == MsgFinal && params.Requester != nil && params.Requester[uint(i+1)] {
+				continue
+			}
 			channel <- msg
 		}
 		return nil
@@ -225,17 +228,18 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 			})
 
 			if params.Requester != nil && params.Requester[uint(id)] {
-				tag := "ID.1." + strconv.Itoa(int(params.Slot))
-				err := v.RunRequest(ctx, uint(id), params.Slot, public, pubKeys, shares[id], tag, broadcast, unicast, channels[i])
-				if !receivedAll {
+				go func() {
+					tag := BuildTag(uint(1), params.Slot)
+					err := v.BroadcastRequest(ctx, uint(id), tag, broadcast)
 					require.NoError(t, err)
-				}
-			} else {
-				err := v.Run(ctx, uint(id), params.Slot, public, pubKeys, shares[id], params.InputValue[uint(id)], broadcast, unicast, channels[i])
-				if !receivedAll {
-					require.NoError(t, err)
-				}
+				}()
 			}
+
+			err := v.Run(ctx, uint(id), params.Slot, public, pubKeys, shares[id], params.InputValue[uint(id)], broadcast, unicast, channels[i])
+			if !receivedAll {
+				require.NoError(t, err)
+			}
+
 		}(i)
 	}
 
