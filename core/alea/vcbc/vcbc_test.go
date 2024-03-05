@@ -87,6 +87,29 @@ func TestVCBC(t *testing.T) {
 		})
 	})
 
+	t.Run("faulty signature", func(t *testing.T) {
+		testVCBC(t, testParametersVCBC{
+			Slot: 0,
+			InputValue: map[uint][]byte{
+				1: []byte("Hello"),
+				2: []byte("World"),
+				3: []byte("Goodbye"),
+				4: []byte("Planet"),
+			},
+			Requester:  nil,
+			StartDelay: map[uint]time.Duration{
+				1: 0,
+				2: 1 * time.Second,
+				3: 2 * time.Second,
+				4: 3 * time.Second,
+			},
+			DeadNodes:  nil,
+			FaultySig: map[uint]bool{
+				1: true,
+			},
+		})
+	})
+
 	t.Run("happy req 0", func(t *testing.T) {
 		testVCBC(t, testParametersVCBC{
 			Slot: 0,
@@ -141,11 +164,8 @@ func (t testParametersVCBC) totalNumberMessages() int {
 			n--
 		}
 	}
-	for _, v := range t.FaultySig {
-		if v {
-			n--
-		}
-	}
+	// Faulty signatures will not decrease the number of messages
+	// since there are enough good signatures to threshold aggregate
 
 	return int(math.Pow(float64(n), 2))
 }
@@ -168,6 +188,16 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 	pubKeys := make(map[uint]tbls.PublicKey)
 	for i, share := range shares {
 		pubKeys[uint(i)], _ = tbls.SecretToPublicKey(share)
+	}
+
+	if params.FaultySig != nil {
+		for k, v := range params.FaultySig {
+			if v {
+				t.Logf("node %d has faulty signature", k)
+				secret, _ := tbls.GenerateSecretKey()
+				shares[int(k)] = secret
+			}
+		}
 	}
 
 	// Channels to communicate between go routines
@@ -221,7 +251,7 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 				}
 			}
 
-			v := NewVCBC()
+			v := NewVCBC(n, f)
 			v.Subscribe(func(ctx context.Context, result VCBCResult) error {
 				outputChannel <- result
 				return nil

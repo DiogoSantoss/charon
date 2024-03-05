@@ -15,23 +15,24 @@ import (
 
 type CommonCoinMessage struct {
 	Source uint
-	Slot   uint
-	Round  uint
+	Slot   uint // PoS slot
+	Tag    uint // ABA instance tag
+	Round  uint // ABA round
 	Sig    tbls.Signature
 }
 
 // GetCommonCoinName returns a unique nonce representing the coin name
 // for the given slot and round
-func getCommonCoinName(slot uint, round uint) ([]byte, error) {
-	name := fmt.Sprintf("AleaCommmonCoin%v%v", slot, round)
+func getCommonCoinName(slot uint, tag uint, round uint) ([]byte, error) {
+	name := fmt.Sprintf("AleaCommmonCoin%v%v%v", slot, tag, round)
 	nonce := sha256.Sum256([]byte(name))
 
 	return nonce[:], nil
 }
 
 // GetCommonCoinNameSigned returns a signature share of the coin name
-func getCommonCoinNameSigned(slot uint, round uint, privateKey tbls.PrivateKey) (tbls.Signature, error) {
-	name, err := getCommonCoinName(slot, round)
+func getCommonCoinNameSigned(slot uint, tag uint, round uint, privateKey tbls.PrivateKey) (tbls.Signature, error) {
+	name, err := getCommonCoinName(slot, tag, round)
 	if err != nil {
 		return tbls.Signature{}, err
 	}
@@ -40,13 +41,13 @@ func getCommonCoinNameSigned(slot uint, round uint, privateKey tbls.PrivateKey) 
 }
 
 // GetCommonCoinResult returns the coin result by threshold aggregating the signatures
-func getCommonCoinResult(ctx context.Context, slot uint, round uint, pubKey tbls.PublicKey, signatures map[int]tbls.Signature) (byte, error) {
+func getCommonCoinResult(ctx context.Context, slot uint, tag uint, round uint, pubKey tbls.PublicKey, signatures map[int]tbls.Signature) (byte, error) {
 	totalSig, err := tbls.ThresholdAggregate(signatures)
 	if err != nil {
 		return 0, err
 	}
 
-	sid, err := getCommonCoinName(slot, round)
+	sid, err := getCommonCoinName(slot, tag, round)
 	if err != nil {
 		return 0, err
 	}
@@ -60,12 +61,12 @@ func getCommonCoinResult(ctx context.Context, slot uint, round uint, pubKey tbls
 	return totalSig[0] & 1, nil
 }
 
-func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey,
+func SampleCoin(ctx context.Context, id uint, slot uint, tag uint, round uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey,
 	privKey tbls.PrivateKey, broadcast func(CommonCoinMessage) error, receiveChannel <-chan CommonCoinMessage) (byte, error) {
 
 	ctx = log.WithTopic(ctx, "commoncoin")
 
-	log.Info(ctx, "Node id in round r sampled common coin", z.Uint("id", id), z.Uint("r", round))
+	log.Info(ctx, "Node id sampled common coin", z.Uint("id", id), z.Uint("slot", slot), z.Uint("tag", tag), z.Uint("r", round))
 
 	// === State ===
 	var (
@@ -73,20 +74,21 @@ func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls
 		signatures      = make(map[int]tbls.Signature)
 	)
 
-	coinName, err := getCommonCoinName(slot, round)
+	coinName, err := getCommonCoinName(slot, tag, round)
 	if err != nil {
 		return 0, err
 	}
 
 	{
-		signature, err := getCommonCoinNameSigned(slot, round, privKey)
+		signature, err := getCommonCoinNameSigned(slot, tag, round, privKey)
 		if err != nil {
 			return 0, err
 		}
-		// TODO: Should i avoid sending to myself?
+	
 		err = broadcast(CommonCoinMessage{
 			Source: id,
 			Slot:   slot,
+			Tag:    tag,
 			Round:  round,
 			Sig:    signature,
 		})
@@ -100,14 +102,14 @@ func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls
 		case msg := <-receiveChannel:
 
 			// ignore messages from other rounds
-			if msg.Round != round {
+			if msg.Slot != slot || msg.Tag != tag || msg.Round != round {
 				continue
 			}
 
 			// verify signature validity
 			err := tbls.Verify(pubKeys[msg.Source], coinName, msg.Sig)
 			if err != nil {
-				log.Info(ctx, "Node id with round r received invalid signature from source", z.Uint("id", id), z.Uint("source", msg.Source), z.Uint("r", round))
+				log.Info(ctx, "Node id received invalid signature from source", z.Uint("id", id), z.Uint("slot", slot), z.Uint("tag", tag), z.Uint("r", round), z.Uint("source", msg.Source))
 				continue
 			}
 
@@ -115,12 +117,12 @@ func SampleCoin(ctx context.Context, id uint, slot uint, round uint, pubKey tbls
 
 			if len(signatures) >= int(f)+1 {
 
-				result, err := getCommonCoinResult(ctx, slot, round, pubKey, signatures)
+				result, err := getCommonCoinResult(ctx, slot, tag, round, pubKey, signatures)
 				if err != nil {
 					continue
 				}
 
-				log.Info(ctx, "Node id in round r decided value", z.Uint("id", id), z.U8("value", result), z.Uint("r", round))
+				log.Info(ctx, "Node id decided value", z.Uint("id", id), z.Uint("slot", slot), z.Uint("tag", tag), z.Uint("r", round), z.U8("coin", result))
 
 				return result, nil
 			}

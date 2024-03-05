@@ -23,7 +23,7 @@ func TestABA(t *testing.T) {
 			},
 			StartDelay: nil,
 			DeadNodes:  nil,
-			FaultySig: nil,
+			FaultySig:  nil,
 		})
 	})
 
@@ -38,7 +38,7 @@ func TestABA(t *testing.T) {
 			},
 			StartDelay: nil,
 			DeadNodes:  nil,
-			FaultySig: nil,
+			FaultySig:  nil,
 		})
 	})
 
@@ -53,7 +53,7 @@ func TestABA(t *testing.T) {
 			},
 			StartDelay: nil,
 			DeadNodes:  nil,
-			FaultySig: nil,
+			FaultySig:  nil,
 		})
 	})
 
@@ -67,10 +67,10 @@ func TestABA(t *testing.T) {
 				4: 1,
 			},
 			StartDelay: map[uint]time.Duration{
-				1: 1 * time.Second * 0,
-				2: 1 * time.Second * 1,
-				3: 1 * time.Second * 2,
-				4: 1 * time.Second * 3,
+				1: time.Second * 0,
+				2: time.Second * 1,
+				3: time.Second * 2,
+				4: time.Second * 3,
 			},
 			DeadNodes: nil,
 			FaultySig: nil,
@@ -104,10 +104,10 @@ func TestABA(t *testing.T) {
 				4: 1,
 			},
 			StartDelay: map[uint]time.Duration{
-				1: 1 * time.Second * 0,
-				2: 1 * time.Second * 1,
-				3: 1 * time.Second * 4,
-				4: 1 * time.Second * 5,
+				1: time.Second * 0,
+				2: time.Second * 1,
+				3: time.Second * 4,
+				4: time.Second * 5,
 			},
 			DeadNodes: nil,
 			FaultySig: map[uint]bool{
@@ -127,18 +127,29 @@ type testParametersABA struct {
 
 func testABA(t *testing.T, params testParametersABA) {
 
+	const (
+		f = 1
+		n = 3*f + 1
+	)
+
 	secret, _ := tbls.GenerateSecretKey()
 	public, _ := tbls.SecretToPublicKey(secret)
-
-	// Number of go routines and threshold size
-	const f = 1
-	const n = 3*f + 1
 
 	// Generate private key shares and corresponding public keys
 	shares, _ := tbls.ThresholdSplit(secret, n, f+1)
 	pubKeys := make(map[uint]tbls.PublicKey)
 	for i, share := range shares {
 		pubKeys[uint(i)], _ = tbls.SecretToPublicKey(share)
+	}
+
+	if params.FaultySig != nil {
+		for k, v := range params.FaultySig {
+			if v {
+				t.Logf("node %d has faulty signature", k)
+				secret, _ := tbls.GenerateSecretKey()
+				shares[int(k)] = secret
+			}
+		}
 	}
 
 	// Resources for common coin
@@ -195,15 +206,8 @@ func testABA(t *testing.T, params testParametersABA) {
 				}
 			}
 
-			if params.FaultySig != nil {
-				if _, ok := params.FaultySig[uint(id)]; ok {
-					t.Logf("node %d has faulty signature", id)
-					secret, _ := tbls.GenerateSecretKey()
-					shares[id] = secret
-				}
-			}
-
-			result, err := RunABA(ctx, uint(id), params.Slot, public, pubKeys, shares[id], params.InputValue[uint(i)], abaBroadcast, abaChannels[i], commonCoinBroadcast, commonCoinChannels[i])
+			a := NewABA(n, f)
+			result, err := a.Run(ctx, uint(id), params.Slot, 0, public, pubKeys, shares[id], params.InputValue[uint(i)], abaBroadcast, abaChannels[i], commonCoinBroadcast, commonCoinChannels[i])
 			if err != nil {
 				require.Failf(t, err.Error(), "aba execution %d failed", id)
 			}

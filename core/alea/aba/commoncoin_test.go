@@ -115,7 +115,7 @@ func testCommonCoin(t *testing.T, test testParametersCoin) {
 	// Don't wait for processes that have faulty signatures
 	// since they may never finish
 	wg.Add(n - len(test.FaultySig))
-	
+
 	// Spawn go routines to participate in protocol
 	for i := 0; i < n; i++ {
 
@@ -145,7 +145,7 @@ func testCommonCoin(t *testing.T, test testParametersCoin) {
 				}
 			}
 
-			result, err := SampleCoin(ctx, uint(id), test.Slot, test.Round, public, pubKeys, shares[id], broadcast, channels[i])
+			result, err := SampleCoin(ctx, uint(id), test.Slot, 0, test.Round, public, pubKeys, shares[id], broadcast, channels[i])
 			if err != nil {
 				require.Failf(t, err.Error(), "aba execution %d failed", id)
 			}

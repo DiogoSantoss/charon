@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/obolnetwork/charon/app/log"
 	"github.com/obolnetwork/charon/app/z"
@@ -87,7 +89,12 @@ type VCBCMessage struct {
 	ThresholdSig tbls.Signature
 }
 
-func classify(msg VCBCMessage) UponRule {
+func classify(slot uint, msg VCBCMessage) UponRule {
+
+	if SlotFromTag(msg.Content.Tag) != slot {
+		return UponNothing
+	}
+
 	switch msg.Content.MsgType {
 	case MsgSend:
 		return UponSend
@@ -100,24 +107,36 @@ func classify(msg VCBCMessage) UponRule {
 	case MsgAnswer:
 		return UponAnswer
 	default:
-		return UponNothing
+		panic("bug: invalid message type")
 	}
 }
 
 type VCBC struct {
-	subs []func(ctx context.Context, result VCBCResult) error
+	n                        int
+	f                        int
+	thresholdPartialSigValue int
+	subs                     []func(ctx context.Context, result VCBCResult) error
 }
 
-func NewVCBC() *VCBC {
-	return &VCBC{}
+func NewVCBC(n int, f int) *VCBC {
+	return &VCBC{
+		n:                        n,
+		f:                        f,
+		thresholdPartialSigValue: int(math.Ceil((float64(n) + float64(f) + 1) / 2)),
+	}
 }
 
 func BuildTag(id uint, slot uint) string {
 	return "ID." + strconv.Itoa(int(id)) + "." + strconv.Itoa(int(slot))
 }
 
+func SlotFromTag(tag string) uint {
+	slot, _ := strconv.Atoi(strings.Split(tag, ".")[2])
+	return uint(slot)
+}
+
 func IdFromTag(tag string) uint {
-	id, _ := strconv.Atoi(tag[3:4])
+	id, _ := strconv.Atoi(strings.Split(tag, ".")[1])
 	return uint(id)
 }
 
@@ -126,6 +145,8 @@ func (v *VCBC) Subscribe(fn func(ctx context.Context, result VCBCResult) error) 
 }
 
 func (v *VCBC) BroadcastRequest(ctx context.Context, id uint, tag string, broadcast func(VCBCMessage) error) error {
+
+	ctx = log.WithTopic(ctx, "vcbc")
 
 	log.Info(ctx, "Broadcasting VCBC request", z.Uint("id", id))
 
@@ -138,7 +159,18 @@ func (v *VCBC) BroadcastRequest(ctx context.Context, id uint, tag string, broadc
 	})
 }
 
-func (v *VCBC) Run(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey, m []byte, broadcast func(VCBCMessage) error, unicast func(uint, VCBCMessage) error, receiveChannel <-chan VCBCMessage) error {
+func (v *VCBC) Run(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey, m []byte, broadcast func(VCBCMessage) error, unicast func(uint, VCBCMessage) error, receiveChannel <-chan VCBCMessage) (err error) {
+
+	defer func() {
+		// Panics are used for assertions and sanity checks to reduce lines of code
+		// and to improve readability. Catch them here.
+		if r := recover(); r != nil {
+			if !strings.Contains(fmt.Sprint(r), "bug") {
+				panic(r) // Only catch internal sanity checks.
+			}
+			err = fmt.Errorf("vcbc sanity check: %v", r) //nolint: forbidigo // Wrapping a panic, not error.
+		}
+	}()
 
 	ctx = log.WithTopic(ctx, "vcbc")
 
@@ -147,9 +179,6 @@ func (v *VCBC) Run(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKe
 	// === State ===
 
 	var (
-		n = 4.0
-		f = 1.0
-
 		hashFunction = sha256.New()
 
 		messageByTag      = make(map[string][]byte)         // Store messages received by tag
@@ -172,15 +201,14 @@ func (v *VCBC) Run(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKe
 		if err != nil {
 			return err
 		}
-		log.Info(ctx, "Node id sent message", z.Uint("id", id))
+		log.Info(ctx, "Node id sent message", z.Uint("id", id), z.Uint("slot", slot))
 	}
 
 	for {
 		select {
 		case msg := <-receiveChannel:
 
-			rule := classify(msg)
-
+			rule := classify(slot, msg)
 			switch rule {
 			case UponSend:
 				if !alreadyUnicastReady[msg.Content.Tag] {
@@ -216,7 +244,7 @@ func (v *VCBC) Run(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKe
 					if err != nil {
 						return err
 					}
-					log.Info(ctx, "Node id sent ready to source", z.Uint("id", id), z.Uint("source", msg.Source))
+					log.Info(ctx, "Node id sent ready to source", z.Uint("id", id), z.Uint("slot", slot), z.Uint("source", msg.Source))
 				}
 			case UponReady:
 				if partialSigsBySource[int(msg.Source)] == (tbls.Signature{}) {
@@ -228,14 +256,14 @@ func (v *VCBC) Run(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKe
 					}
 					err = tbls.Verify(pubKeys[msg.Source], encodedMessage, msg.PartialSig)
 					if err != nil {
-						log.Info(ctx, "Node id received invalid signature from source", z.Uint("id", id), z.Uint("source", msg.Source))
+						log.Info(ctx, "Node id received invalid ready signature from source", z.Uint("id", id), z.Uint("slot", slot), z.Uint("source", msg.Source))
 						continue
 					}
 
 					partialSigsBySource[int(msg.Source)] = msg.PartialSig
 
 					// If received enough partial sigs, aggregate and broadcast final signature
-					if len(partialSigsBySource) == int(math.Ceil((n+f+1)/2)) {
+					if len(partialSigsBySource) == v.thresholdPartialSigValue {
 						thresholdSig, err := tbls.ThresholdAggregate(partialSigsBySource)
 						if err != nil {
 							return err
@@ -253,7 +281,7 @@ func (v *VCBC) Run(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKe
 						if err != nil {
 							return err
 						}
-						log.Info(ctx, "Node id sent final", z.Uint("id", id))
+						log.Info(ctx, "Node id sent final", z.Uint("id", id), z.Uint("slot", slot))
 					}
 				}
 			case UponFinal:
@@ -275,7 +303,7 @@ func (v *VCBC) Run(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKe
 
 				err = tbls.Verify(pubKey, encodedContent, msg.ThresholdSig)
 				if err != nil {
-					log.Info(ctx, "Node id received invalid signature from source", z.Uint("id", id), z.Uint("source", msg.Source))
+					log.Info(ctx, "Node id received invalid final signature from source", z.Uint("id", id), z.Uint("slot", slot), z.Uint("source", msg.Source))
 					continue
 				}
 
@@ -303,7 +331,7 @@ func (v *VCBC) Run(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKe
 					if err != nil {
 						return err
 					}
-					log.Info(ctx, "Node id sent answer to source", z.Uint("id", id), z.Uint("source", msg.Source))
+					log.Info(ctx, "Node id sent answer to source", z.Uint("id", id), z.Uint("slot", slot), z.Uint("source", msg.Source))
 				}
 
 			case UponAnswer:
@@ -324,14 +352,14 @@ func (v *VCBC) Run(ctx context.Context, id uint, slot uint, pubKey tbls.PublicKe
 
 				err = tbls.Verify(pubKey, encodedContent, msg.ThresholdSig)
 				if err != nil {
-					log.Info(ctx, "Node id received invalid signature from source", z.Uint("id", id), z.Uint("source", msg.Source))
+					log.Info(ctx, "Node id received invalid signature from source", z.Uint("id", id), z.Uint("slot", slot), z.Uint("source", msg.Source))
 					continue
 				}
 
 				// Output result
 				if thresholdSigByTag[msg.Content.Tag] == (tbls.Signature{}) {
 					thresholdSigByTag[msg.Content.Tag] = msg.ThresholdSig
-					log.Info(ctx, "Node id received answer", z.Uint("id", id))
+					log.Info(ctx, "Node id received answer", z.Uint("id", id), z.Uint("slot", slot))
 					for _, sub := range v.subs {
 						sub(ctx, VCBCResult{
 							Tag:     msg.Content.Tag,
