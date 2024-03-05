@@ -21,22 +21,24 @@ type CommonCoinMessage struct {
 	Sig    tbls.Signature
 }
 type CommonCoin struct {
-	Id uint
-	Slot uint
-	Tag uint
-	Round uint
-	PubKey tbls.PublicKey
+	F       uint
+	Id      uint
+	Slot    uint
+	Tag     uint
+	Round   uint
+	PubKey  tbls.PublicKey
 	PubKeys map[uint]tbls.PublicKey
 	PrivKey tbls.PrivateKey
 }
 
-func NewCommonCoin(id uint, slot uint, tag uint, round uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey) *CommonCoin {
+func NewCommonCoin(f uint, id uint, slot uint, tag uint, round uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey) *CommonCoin {
 	return &CommonCoin{
-		Id: id,
-		Slot: slot,
-		Tag: tag,
-		Round: round,
-		PubKey: pubKey,
+		F:       f,
+		Id:      id,
+		Slot:    slot,
+		Tag:     tag,
+		Round:   round,
+		PubKey:  pubKey,
 		PubKeys: pubKeys,
 		PrivKey: privKey,
 	}
@@ -90,7 +92,6 @@ func (c *CommonCoin) SampleCoin(ctx context.Context, broadcast func(CommonCoinMe
 
 	// === State ===
 	var (
-		f          uint = 1 // should get F from somewhere, e.g. GetSmallQuorumSize()
 		signatures      = make(map[int]tbls.Signature)
 	)
 
@@ -135,7 +136,7 @@ func (c *CommonCoin) SampleCoin(ctx context.Context, broadcast func(CommonCoinMe
 
 			signatures[int(msg.Source)] = msg.Sig
 
-			if len(signatures) >= int(f)+1 {
+			if len(signatures) >= int(c.F+1) {
 
 				result, err := c.getCommonCoinResult(ctx, signatures)
 				if err != nil {

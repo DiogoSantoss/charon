@@ -76,36 +76,36 @@ type ABAMessage struct {
 }
 
 // Returns the triggered upon rule by the received message
-func classify(a *ABA, slot uint, tag uint, msg ABAMessage, values map[byte]struct{}, receivedInit map[uint][]ABAMessage, receivedAux map[uint][]ABAMessage, receivedConf map[uint][]ABAMessage, receivedFinish map[uint][]ABAMessage) UponRule {
+func classify(a *ABA, msg ABAMessage, values map[byte]struct{}, receivedInit map[uint][]ABAMessage, receivedAux map[uint][]ABAMessage, receivedConf map[uint][]ABAMessage, receivedFinish map[uint][]ABAMessage) UponRule {
 
 	// ignore messages from other slots or tags
-	if msg.Slot != slot || msg.Tag != tag {
+	if msg.Slot != a.Slot || msg.Tag != a.Tag {
 		return UponNothing
 	}
 
 	switch msg.MsgType {
 	case MsgInit:
 		inits := filterByRoundAndValue(flatten(receivedInit), msg.Round, msg.Estimative)
-		if len(inits) >= a.bigQuorum {
+		if len(inits) >= a.BigQuorum {
 			return UponStrongSupportInit
-		} else if len(inits) >= a.smallQuorum {
+		} else if len(inits) >= a.SmallQuorum {
 			return UponWeakSupportInit
 		}
 	case MsgAux:
 		auxs := filterByRoundAndValues(flatten(receivedAux), msg.Round, setToArray(values))
-		if len(auxs) >= a.correctNodes {
+		if len(auxs) >= a.CorrectNodes {
 			return UponSupportAux
 		}
 	case MsgConf:
 		confs := filterByRoundAndSubsetValues(flatten(receivedConf), msg.Round, values)
-		if len(confs) >= a.correctNodes {
+		if len(confs) >= a.CorrectNodes {
 			return UponSupportConf
 		}
 	case MsgFinish:
 		finishes := filterByValue(flatten(receivedFinish), msg.Estimative)
-		if len(finishes) >= a.bigQuorum {
+		if len(finishes) >= a.BigQuorum {
 			return UponStrongSupportFinish
-		} else if len(finishes) >= a.smallQuorum {
+		} else if len(finishes) >= a.SmallQuorum {
 			return UponWeakSupportFinish
 		}
 	default:
@@ -116,24 +116,39 @@ func classify(a *ABA, slot uint, tag uint, msg ABAMessage, values map[byte]struc
 }
 
 type ABA struct {
-	n            int
-	f            int
-	bigQuorum    int
-	smallQuorum  int
-	correctNodes int
+	// Immutable values
+	N       int
+	F       int
+	Id      uint
+	Slot    uint // PoS slot
+	Tag     uint // ABA instance tag
+	PubKey  tbls.PublicKey
+	PubKeys map[uint]tbls.PublicKey
+	PrivKey tbls.PrivateKey
+	// Computed values
+	BigQuorum    int
+	SmallQuorum  int
+	CorrectNodes int
 }
 
-func NewABA(n int, f int) *ABA {
+func NewABA(n int, f int, id uint, slot uint, tag uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey) *ABA {
 	return &ABA{
-		n:            n,
-		f:            f,
-		bigQuorum:    2*f + 1,
-		smallQuorum:  f + 1,
-		correctNodes: n - f,
+		N:       n,
+		F:       f,
+		Id:      id,
+		Slot:    slot,
+		Tag:     tag,
+		PubKey:  pubKey,
+		PubKeys: pubKeys,
+		PrivKey: privKey,
+
+		BigQuorum:    2*f + 1,
+		SmallQuorum:  f + 1,
+		CorrectNodes: n - f,
 	}
 }
 
-func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey, valueInput byte, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
+func (a *ABA) Run(ctx context.Context, valueInput byte, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
 	broadcastCommonCoin func(CommonCoinMessage) error, receiveChannelCommonCoin <-chan CommonCoinMessage) (result byte, err error) {
 
 	defer func() {
@@ -149,7 +164,7 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 
 	ctx = log.WithTopic(ctx, "aba")
 
-	log.Info(ctx, "Starting ABA", z.Uint("id", id))
+	log.Info(ctx, "Starting ABA", z.Uint("id", a.Id))
 
 	// === State ===
 	var (
@@ -189,9 +204,9 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 	{ // Algorithm 1:4
 		err := broadcast(ABAMessage{
 			MsgType:    MsgInit,
-			Source:     id,
-			Slot:       slot,
-			Tag:        tag,
+			Source:     a.Id,
+			Slot:       a.Slot,
+			Tag:        a.Tag,
 			Round:      0,
 			Estimative: estimative[0],
 		})
@@ -207,7 +222,7 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 			// TODO: verify message validity
 			storeMessage(msg)
 
-			rule := classify(a, slot, tag, msg, values[msg.Round], receivedInit, receivedAux, receivedConf, receivedFinish)
+			rule := classify(a, msg, values[msg.Round], receivedInit, receivedAux, receivedConf, receivedFinish)
 			if rule == UponNothing {
 				break
 			}
@@ -216,7 +231,7 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 			case UponWeakSupportFinish: // Algorithm 1:1
 				if !alreadyBroadcastedFinish {
 					alreadyBroadcastedFinish = true
-					msg.Source = id
+					msg.Source = a.Id
 					err := broadcast(msg)
 					if err != nil {
 						return 0, err
@@ -224,11 +239,11 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 				}
 
 			case UponStrongSupportFinish: // Algorithm 1:2
-				log.Info(ctx, "Node id decided value", z.Uint("id", id), z.Uint("slot", msg.Slot), z.Uint("tag", msg.Tag), z.Uint("r", msg.Round), z.U8("value", msg.Estimative))
+				log.Info(ctx, "Node id decided value", z.Uint("id", a.Id), z.Uint("slot", msg.Slot), z.Uint("tag", msg.Tag), z.Uint("r", msg.Round), z.U8("value", msg.Estimative))
 				return msg.Estimative, nil
 
 			case UponWeakSupportInit: // Algorithm 1:5
-				msg.Source = id
+				msg.Source = a.Id
 				err := broadcast(msg)
 				if err != nil {
 					return 0, err
@@ -243,9 +258,9 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 					alreadyBroadcastedAux[msg.Round] = true
 					err := broadcast(ABAMessage{
 						MsgType:    MsgAux,
-						Source:     id,
-						Slot:       slot,
-						Tag:        tag,
+						Source:     a.Id,
+						Slot:       a.Slot,
+						Tag:        a.Tag,
 						Round:      msg.Round,
 						Estimative: msg.Estimative,
 					})
@@ -264,9 +279,9 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 				}
 				err := broadcast(ABAMessage{
 					MsgType: MsgConf,
-					Source:  id,
-					Slot:    slot,
-					Tag:     tag,
+					Source:  a.Id,
+					Slot:    a.Slot,
+					Tag:     a.Tag,
 					Round:   msg.Round,
 					//Values:  values[msg.Round],
 					Values: values_copy,
@@ -279,7 +294,7 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 
 				sr, exists := coinResult[msg.Round]
 				if !exists {
-					c := NewCommonCoin(id, slot, tag, msg.Round, pubKey, pubKeys, privKey)
+					c := NewCommonCoin(a.Id, a.Slot, a.Tag, msg.Round, a.PubKey, a.PubKeys, a.PrivKey)
 					coinValue, err := c.SampleCoin(ctx, broadcastCommonCoin, receiveChannelCommonCoin) // Algorithm 1:9
 					if err != nil {
 						return 0, err
@@ -291,7 +306,7 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 				//Algorithm 1:10
 				if len(values[msg.Round]) == 2 {
 					estimative[msg.Round+1] = sr
-					log.Info(ctx, "Node id has two values", z.Uint("id", id), z.Uint("slot", msg.Slot), z.Uint("tag", msg.Tag), z.Uint("r", msg.Round))
+					log.Info(ctx, "Node id has two values", z.Uint("id", a.Id), z.Uint("slot", msg.Slot), z.Uint("tag", msg.Tag), z.Uint("r", msg.Round))
 
 				} else if len(values[msg.Round]) == 1 {
 					var value byte
@@ -302,13 +317,13 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 					estimative[msg.Round+1] = value
 
 					if (value == sr) && (!alreadyBroadcastedFinish) {
-						log.Info(ctx, "Node id has value matching with coin", z.Uint("id", id), z.Uint("slot", msg.Slot), z.Uint("tag", msg.Tag), z.Uint("r", msg.Round), z.U8("value", value))
+						log.Info(ctx, "Node id has value matching with coin", z.Uint("id", a.Id), z.Uint("slot", msg.Slot), z.Uint("tag", msg.Tag), z.Uint("r", msg.Round), z.U8("value", value))
 						alreadyBroadcastedFinish = true
 						err := broadcast(ABAMessage{
 							MsgType:    MsgFinish,
-							Source:     id,
-							Slot:       slot,
-							Tag:        tag,
+							Source:     a.Id,
+							Slot:       a.Slot,
+							Tag:        a.Tag,
 							Round:      msg.Round,
 							Estimative: sr,
 						})
@@ -316,7 +331,7 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 							return 0, err
 						}
 					} else if (value != sr) && (!alreadyBroadcastedFinish) {
-						log.Info(ctx, "Node id has value not matching with coin", z.Uint("id", id), z.Uint("slot", msg.Slot), z.Uint("tag", msg.Tag), z.Uint("r", msg.Round), z.U8("value", value), z.U8("coin", sr))
+						log.Info(ctx, "Node id has value not matching with coin", z.Uint("id", a.Id), z.Uint("slot", msg.Slot), z.Uint("tag", msg.Tag), z.Uint("r", msg.Round), z.U8("value", value), z.U8("coin", sr))
 					}
 				}
 
@@ -330,12 +345,12 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 						values[next_round] = make(map[byte]struct{})
 					}
 
-					log.Info(ctx, "Node id starting new round", z.Uint("id", id), z.Uint("slot", msg.Slot), z.Uint("tag", msg.Tag), z.Uint("r", next_round))
+					log.Info(ctx, "Node id starting new round", z.Uint("id", a.Id), z.Uint("slot", msg.Slot), z.Uint("tag", msg.Tag), z.Uint("r", next_round))
 					err := broadcast(ABAMessage{
 						MsgType:    MsgInit,
-						Source:     id,
-						Slot:       slot,
-						Tag:        tag,
+						Source:     a.Id,
+						Slot:       a.Slot,
+						Tag:        a.Tag,
 						Round:      next_round,
 						Estimative: estimative[next_round],
 					})

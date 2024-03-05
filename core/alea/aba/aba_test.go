@@ -21,9 +21,6 @@ func TestABA(t *testing.T) {
 				3: 1,
 				4: 1,
 			},
-			StartDelay: nil,
-			DeadNodes:  nil,
-			FaultySig:  nil,
 		})
 	})
 
@@ -36,9 +33,6 @@ func TestABA(t *testing.T) {
 				3: 0,
 				4: 0,
 			},
-			StartDelay: nil,
-			DeadNodes:  nil,
-			FaultySig:  nil,
 		})
 	})
 
@@ -51,9 +45,6 @@ func TestABA(t *testing.T) {
 				3: 1,
 				4: 0,
 			},
-			StartDelay: nil,
-			DeadNodes:  nil,
-			FaultySig:  nil,
 		})
 	})
 
@@ -72,8 +63,6 @@ func TestABA(t *testing.T) {
 				3: time.Second * 2,
 				4: time.Second * 3,
 			},
-			DeadNodes: nil,
-			FaultySig: nil,
 		})
 	})
 
@@ -86,11 +75,9 @@ func TestABA(t *testing.T) {
 				3: 1,
 				4: 1,
 			},
-			StartDelay: nil,
 			DeadNodes: map[uint]bool{
 				1: true,
 			},
-			FaultySig: nil,
 		})
 	})
 
@@ -109,7 +96,6 @@ func TestABA(t *testing.T) {
 				3: time.Second * 4,
 				4: time.Second * 5,
 			},
-			DeadNodes: nil,
 			FaultySig: map[uint]bool{
 				1: true,
 			},
@@ -206,8 +192,8 @@ func testABA(t *testing.T, params testParametersABA) {
 				}
 			}
 
-			a := NewABA(n, f)
-			result, err := a.Run(ctx, uint(id), params.Slot, 0, public, pubKeys, shares[id], params.InputValue[uint(i)], abaBroadcast, abaChannels[i], commonCoinBroadcast, commonCoinChannels[i])
+			a := NewABA(n, f, uint(id), params.Slot, 0, public, pubKeys, shares[id])
+			result, err := a.Run(ctx,  params.InputValue[uint(i)], abaBroadcast, abaChannels[i], commonCoinBroadcast, commonCoinChannels[i])
 			if err != nil {
 				require.Failf(t, err.Error(), "aba execution %d failed", id)
 			}
