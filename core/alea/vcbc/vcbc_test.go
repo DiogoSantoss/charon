@@ -23,10 +23,6 @@ func TestVCBC(t *testing.T) {
 				3: nil,
 				4: nil,
 			},
-			Requester:  nil,
-			StartDelay: nil,
-			DeadNodes:  nil,
-			FaultySig:  nil,
 		})
 	})
 	t.Run("happy 1", func(t *testing.T) {
@@ -38,10 +34,6 @@ func TestVCBC(t *testing.T) {
 				3: []byte("Goodbye"),
 				4: []byte("Planet"),
 			},
-			Requester:  nil,
-			StartDelay: nil,
-			DeadNodes:  nil,
-			FaultySig:  nil,
 		})
 	})
 
@@ -54,15 +46,12 @@ func TestVCBC(t *testing.T) {
 				3: []byte("Goodbye"),
 				4: []byte("Planet"),
 			},
-			Requester: nil,
 			StartDelay: map[uint]time.Duration{
 				1: 0,
 				2: 1 * time.Second,
 				3: 2 * time.Second,
 				4: 3 * time.Second,
 			},
-			DeadNodes: nil,
-			FaultySig: nil,
 		})
 	})
 
@@ -75,15 +64,12 @@ func TestVCBC(t *testing.T) {
 				3: []byte("Goodbye"),
 				4: []byte("Planet"),
 			},
-			Requester:  nil,
-			StartDelay: nil,
 			DeadNodes: map[uint]bool{
 				1: false,
 				2: true,
 				3: false,
 				4: false,
 			},
-			FaultySig: nil,
 		})
 	})
 
@@ -96,14 +82,12 @@ func TestVCBC(t *testing.T) {
 				3: []byte("Goodbye"),
 				4: []byte("Planet"),
 			},
-			Requester:  nil,
 			StartDelay: map[uint]time.Duration{
 				1: 0,
 				2: 1 * time.Second,
 				3: 2 * time.Second,
 				4: 3 * time.Second,
 			},
-			DeadNodes:  nil,
 			FaultySig: map[uint]bool{
 				1: true,
 			},
@@ -131,8 +115,6 @@ func TestVCBC(t *testing.T) {
 				3: 0,
 				4: 0,
 			},
-			DeadNodes: nil,
-			FaultySig: nil,
 		})
 	})
 }
@@ -251,7 +233,7 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 				}
 			}
 
-			v := NewVCBC(n, f)
+			v := NewVCBC(n, f, uint(id), params.Slot, public, pubKeys, shares[id])
 			v.Subscribe(func(ctx context.Context, result VCBCResult) error {
 				outputChannel <- result
 				return nil
@@ -260,12 +242,12 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 			if params.Requester != nil && params.Requester[uint(id)] {
 				go func() {
 					tag := BuildTag(uint(1), params.Slot)
-					err := v.BroadcastRequest(ctx, uint(id), tag, broadcast)
+					err := v.BroadcastRequest(ctx, tag, broadcast)
 					require.NoError(t, err)
 				}()
 			}
 
-			err := v.Run(ctx, uint(id), params.Slot, public, pubKeys, shares[id], params.InputValue[uint(id)], broadcast, unicast, channels[i])
+			err := v.Run(ctx, params.InputValue[uint(id)], broadcast, unicast, channels[i])
 			if !receivedAll {
 				require.NoError(t, err)
 			}
