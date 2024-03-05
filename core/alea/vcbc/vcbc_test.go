@@ -37,7 +37,7 @@ func TestVCBC(t *testing.T) {
 		})
 	})
 
-	t.Run("stagged start", func(t *testing.T) {
+	t.Run("stagger start", func(t *testing.T) {
 		testVCBC(t, testParametersVCBC{
 			Slot: 0,
 			InputValue: map[uint][]byte{

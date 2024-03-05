@@ -15,6 +15,7 @@ func TestABA(t *testing.T) {
 	t.Run("happy 0", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Slot: 0,
+			Tag:  0,
 			InputValue: map[uint]byte{
 				1: 1,
 				2: 1,
@@ -27,6 +28,7 @@ func TestABA(t *testing.T) {
 	t.Run("happy 1", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Slot: 1,
+			Tag:  1,
 			InputValue: map[uint]byte{
 				1: 0,
 				2: 0,
@@ -39,6 +41,7 @@ func TestABA(t *testing.T) {
 	t.Run("different input", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Slot: 0,
+			Tag:  0,
 			InputValue: map[uint]byte{
 				1: 1,
 				2: 0,
@@ -51,6 +54,7 @@ func TestABA(t *testing.T) {
 	t.Run("stagger start", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Slot: 0,
+			Tag:  0,
 			InputValue: map[uint]byte{
 				1: 1,
 				2: 1,
@@ -69,6 +73,7 @@ func TestABA(t *testing.T) {
 	t.Run("one dead", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Slot: 0,
+			Tag:  0,
 			InputValue: map[uint]byte{
 				1: 1,
 				2: 1,
@@ -84,6 +89,7 @@ func TestABA(t *testing.T) {
 	t.Run("faulty signature", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Slot: 0,
+			Tag:  0,
 			InputValue: map[uint]byte{
 				1: 1,
 				2: 1,
@@ -105,6 +111,7 @@ func TestABA(t *testing.T) {
 
 type testParametersABA struct {
 	Slot       uint
+	Tag        uint
 	InputValue map[uint]byte
 	StartDelay map[uint]time.Duration
 	DeadNodes  map[uint]bool
@@ -192,8 +199,8 @@ func testABA(t *testing.T, params testParametersABA) {
 				}
 			}
 
-			a := NewABA(n, f, uint(id), params.Slot, 0, public, pubKeys, shares[id])
-			result, err := a.Run(ctx,  params.InputValue[uint(i)], abaBroadcast, abaChannels[i], commonCoinBroadcast, commonCoinChannels[i])
+			a := NewABA(n, f, uint(id), params.Slot, public, pubKeys, shares[id])
+			result, err := a.Run(ctx, params.Tag, params.InputValue[uint(i)], abaBroadcast, abaChannels[i], commonCoinBroadcast, commonCoinChannels[i])
 			if err != nil {
 				require.Failf(t, err.Error(), "aba execution %d failed", id)
 			}

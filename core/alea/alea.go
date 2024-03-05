@@ -24,15 +24,25 @@ type Alea struct {
 		subs []func(context.Context, core.Duty, core.UnsignedDataSet) error
 	*/
 
-	n    int
-	f    int
-	subs []func(ctx context.Context, result []byte) error
+	N       int
+	F       int
+	Id      uint
+	Slot    uint // PoS slot
+	PubKey  tbls.PublicKey
+	PubKeys map[uint]tbls.PublicKey
+	PrivKey tbls.PrivateKey
+	Subs    []func(ctx context.Context, result []byte) error
 }
 
-func NewAlea(n int, f int) *Alea {
+func NewAlea(n int, f int, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey) *Alea {
 	return &Alea{
-		n: n,
-		f: f,
+		N:       n,
+		F:       f,
+		Id:      id,
+		Slot:    slot,
+		PubKey:  pubKey,
+		PubKeys: pubKeys,
+		PrivKey: privKey,
 	}
 }
 
@@ -63,7 +73,7 @@ func (a *Alea) Propose(ctx context.Context, duty core.Duty, data core.UnsignedDa
 }
 
 func (a *Alea) Subscribe(fn func(ctx context.Context, result []byte) error) {
-	a.subs = append(a.subs, fn)
+	a.Subs = append(a.Subs, fn)
 }
 
 /*
@@ -74,11 +84,13 @@ func (a *Alea) Subscribe(fn func(ctx context.Context, result []byte) error) {
 
 	How to use the networking layer instead of hand made channels ?
 	How to separate protocol messages so that ,e.g., ABA doesn't try to handle VCBC messages ?
+		anything to do with p2p.RegisterHandler ?
 	How to test using peer to peer network ?
 */
 
-func (a *Alea) Run(ctx context.Context, id uint, slot uint, valueChannel chan []byte, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey,
-	broadcastAba func(aba.ABAMessage) error, receiveAba chan aba.ABAMessage, broadcastCommonCoin func(aba.CommonCoinMessage) error, receiveCommonCoin chan aba.CommonCoinMessage,
+func (a *Alea) Run(ctx context.Context, valueChannel chan []byte,
+	broadcastAba func(aba.ABAMessage) error, receiveAba chan aba.ABAMessage,
+	broadcastCommonCoin func(aba.CommonCoinMessage) error, receiveCommonCoin chan aba.CommonCoinMessage,
 	broadcastVCBC func(vcbc.VCBCMessage) error, unicastVCBC func(uint, vcbc.VCBCMessage) error, receiveVCBC chan vcbc.VCBCMessage) (err error) {
 
 	defer func() {
@@ -94,38 +106,41 @@ func (a *Alea) Run(ctx context.Context, id uint, slot uint, valueChannel chan []
 
 	ctx = log.WithTopic(ctx, "alea")
 
-	log.Info(ctx, "Starting Alea", z.Uint("id", id))
+	log.Info(ctx, "Starting Alea", z.Uint("id", a.Id))
 
 	// === State ===
 	var (
-		abaInstance       *aba.ABA   = aba.NewABA(a.n, a.f)
-		vcbcInstance      *vcbc.VCBC = vcbc.NewVCBC(a.n, a.f)
+		abaInstance       *aba.ABA   = aba.NewABA(a.N, a.F, a.Id, a.Slot, a.PubKey, a.PubKeys, a.PrivKey)
+		vcbcInstance      *vcbc.VCBC = vcbc.NewVCBC(a.N, a.F, a.Id, a.Slot, a.PubKey, a.PubKeys, a.PrivKey)
 		agreementRound    uint       = 0
 		valuePerPeerMutex sync.Mutex
 		valuePerPeer      = make(map[uint][]byte)
 	)
 
 	getLeaderId := func() uint {
-		return agreementRound%uint(a.n) + 1
+		return agreementRound%uint(a.N) + 1
 	}
 
 	// Store result of VCBC
 	vcbcInstance.Subscribe(func(ctx context.Context, result vcbc.VCBCResult) error {
+
 		valuePerPeerMutex.Lock()
 		valuePerPeer[vcbc.IdFromTag(result.Tag)] = result.Message
-		log.Info(ctx, "Node id has value from source", z.Uint("id", id), z.Uint("slot", slot), z.Uint("source", vcbc.IdFromTag(result.Tag)))
 		valuePerPeerMutex.Unlock()
+
+		log.Info(ctx, "Node id has value from source", z.Uint("id", a.Id), z.Uint("slot", a.Slot), z.Uint("source", vcbc.IdFromTag(result.Tag)))
 		return nil
 	})
 
 	{
 		// Broadcast component
 		go func() {
-			log.Info(ctx, "Starting broadcast component", z.Uint("id", id), z.Uint("slot", slot))
+			log.Info(ctx, "Starting broadcast component", z.Uint("id", a.Id), z.Uint("slot", a.Slot))
 			for value := range valueChannel {
+				// Close channel since only one value is expected per consensus instance
 				valueChannel = nil
-				log.Info(ctx, "Broadcasting value", z.Uint("id", id), z.Uint("slot", slot))
-				err := vcbcInstance.Run(ctx, id, slot, pubKey, pubKeys, privKey, value, broadcastVCBC, unicastVCBC, receiveVCBC)
+				log.Info(ctx, "Broadcasting value", z.Uint("id", a.Id), z.Uint("slot", a.Slot))
+				err := vcbcInstance.Run(ctx, value, broadcastVCBC, unicastVCBC, receiveVCBC)
 				if err != nil {
 					// TODO how handle error?
 				}
@@ -134,7 +149,7 @@ func (a *Alea) Run(ctx context.Context, id uint, slot uint, valueChannel chan []
 
 		// Agreement component
 		go func() {
-			log.Info(ctx, "Starting agreement component", z.Uint("id", id))
+			log.Info(ctx, "Starting agreement component", z.Uint("id", a.Id))
 
 			for {
 				leaderId := getLeaderId()
@@ -145,9 +160,9 @@ func (a *Alea) Run(ctx context.Context, id uint, slot uint, valueChannel chan []
 				if value != nil {
 					proposal = byte(1)
 				}
-				log.Info(ctx, "Starting agreement round with leader and proposal", z.Uint("id", id), z.Uint("slot", slot), z.Uint("tag", agreementRound), z.Uint("leaderId", leaderId), z.Uint("proposal", uint(proposal)))
-				result, err := abaInstance.Run(ctx, id, slot, agreementRound, pubKey, pubKeys, privKey, proposal, broadcastAba, receiveAba, broadcastCommonCoin, receiveCommonCoin)
-				log.Info(ctx, "Received result from ABA", z.Uint("id", id), z.Uint("slot", slot), z.Uint("tag", agreementRound), z.Uint("result", uint(result)))
+				log.Info(ctx, "Starting agreement round with leader and proposal", z.Uint("id", a.Id), z.Uint("slot", a.Slot), z.Uint("tag", agreementRound), z.Uint("leaderId", leaderId), z.Uint("proposal", uint(proposal)))
+				result, err := abaInstance.Run(ctx, agreementRound, proposal, broadcastAba, receiveAba, broadcastCommonCoin, receiveCommonCoin)
+				log.Info(ctx, "Received result from ABA", z.Uint("id", a.Id), z.Uint("slot", a.Slot), z.Uint("tag", agreementRound), z.Uint("result", uint(result)))
 				if err != nil {
 					// TODO how handle error?
 				}
@@ -157,8 +172,8 @@ func (a *Alea) Run(ctx context.Context, id uint, slot uint, valueChannel chan []
 					value := valuePerPeer[leaderId]
 					valuePerPeerMutex.Unlock()
 					if value == nil {
-						log.Info(ctx, "Leader value not found, requesting value", z.Uint("id", id), z.Uint("slot", slot), z.Uint("tag", agreementRound), z.Uint("leaderId", leaderId))
-						err = vcbcInstance.BroadcastRequest(ctx, id, vcbc.BuildTag(leaderId, slot), broadcastVCBC)
+						log.Info(ctx, "Leader value not found, requesting value", z.Uint("id", a.Id), z.Uint("slot", a.Slot), z.Uint("tag", agreementRound), z.Uint("leaderId", leaderId))
+						err = vcbcInstance.BroadcastRequest(ctx, vcbc.BuildTag(leaderId, a.Slot), broadcastVCBC)
 						if err != nil {
 							// TODO how handle error?
 						}
@@ -174,9 +189,11 @@ func (a *Alea) Run(ctx context.Context, id uint, slot uint, valueChannel chan []
 						}
 					}
 
-					log.Info(ctx, "Agreement reached", z.Uint("id", id), z.Uint("slot", slot), z.Uint("tag", agreementRound))
-					for _, sub := range a.subs {
+					log.Info(ctx, "Agreement reached", z.Uint("id", a.Id), z.Uint("slot", a.Slot), z.Uint("tag", agreementRound))
+					for _, sub := range a.Subs {
+						valuePerPeerMutex.Lock()
 						sub(ctx, valuePerPeer[leaderId])
+						valuePerPeerMutex.Unlock()
 					}
 					break
 				}

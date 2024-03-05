@@ -76,10 +76,10 @@ type ABAMessage struct {
 }
 
 // Returns the triggered upon rule by the received message
-func classify(a *ABA, msg ABAMessage, values map[byte]struct{}, receivedInit map[uint][]ABAMessage, receivedAux map[uint][]ABAMessage, receivedConf map[uint][]ABAMessage, receivedFinish map[uint][]ABAMessage) UponRule {
+func classify(a *ABA, tag uint, msg ABAMessage, values map[byte]struct{}, receivedInit map[uint][]ABAMessage, receivedAux map[uint][]ABAMessage, receivedConf map[uint][]ABAMessage, receivedFinish map[uint][]ABAMessage) UponRule {
 
 	// ignore messages from other slots or tags
-	if msg.Slot != a.Slot || msg.Tag != a.Tag {
+	if msg.Slot != a.Slot || msg.Tag != tag {
 		return UponNothing
 	}
 
@@ -121,7 +121,6 @@ type ABA struct {
 	F       int
 	Id      uint
 	Slot    uint // PoS slot
-	Tag     uint // ABA instance tag
 	PubKey  tbls.PublicKey
 	PubKeys map[uint]tbls.PublicKey
 	PrivKey tbls.PrivateKey
@@ -131,13 +130,12 @@ type ABA struct {
 	CorrectNodes int
 }
 
-func NewABA(n int, f int, id uint, slot uint, tag uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey) *ABA {
+func NewABA(n int, f int, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey) *ABA {
 	return &ABA{
 		N:       n,
 		F:       f,
 		Id:      id,
 		Slot:    slot,
-		Tag:     tag,
 		PubKey:  pubKey,
 		PubKeys: pubKeys,
 		PrivKey: privKey,
@@ -148,7 +146,7 @@ func NewABA(n int, f int, id uint, slot uint, tag uint, pubKey tbls.PublicKey, p
 	}
 }
 
-func (a *ABA) Run(ctx context.Context, valueInput byte, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
+func (a *ABA) Run(ctx context.Context, tag uint, valueInput byte, broadcast func(ABAMessage) error, receiveChannel <-chan ABAMessage,
 	broadcastCommonCoin func(CommonCoinMessage) error, receiveChannelCommonCoin <-chan CommonCoinMessage) (result byte, err error) {
 
 	defer func() {
@@ -206,7 +204,7 @@ func (a *ABA) Run(ctx context.Context, valueInput byte, broadcast func(ABAMessag
 			MsgType:    MsgInit,
 			Source:     a.Id,
 			Slot:       a.Slot,
-			Tag:        a.Tag,
+			Tag:        tag,
 			Round:      0,
 			Estimative: estimative[0],
 		})
@@ -222,7 +220,7 @@ func (a *ABA) Run(ctx context.Context, valueInput byte, broadcast func(ABAMessag
 			// TODO: verify message validity
 			storeMessage(msg)
 
-			rule := classify(a, msg, values[msg.Round], receivedInit, receivedAux, receivedConf, receivedFinish)
+			rule := classify(a, tag, msg, values[msg.Round], receivedInit, receivedAux, receivedConf, receivedFinish)
 			if rule == UponNothing {
 				break
 			}
@@ -260,7 +258,7 @@ func (a *ABA) Run(ctx context.Context, valueInput byte, broadcast func(ABAMessag
 						MsgType:    MsgAux,
 						Source:     a.Id,
 						Slot:       a.Slot,
-						Tag:        a.Tag,
+						Tag:        tag,
 						Round:      msg.Round,
 						Estimative: msg.Estimative,
 					})
@@ -281,7 +279,7 @@ func (a *ABA) Run(ctx context.Context, valueInput byte, broadcast func(ABAMessag
 					MsgType: MsgConf,
 					Source:  a.Id,
 					Slot:    a.Slot,
-					Tag:     a.Tag,
+					Tag:     tag,
 					Round:   msg.Round,
 					//Values:  values[msg.Round],
 					Values: values_copy,
@@ -294,7 +292,7 @@ func (a *ABA) Run(ctx context.Context, valueInput byte, broadcast func(ABAMessag
 
 				sr, exists := coinResult[msg.Round]
 				if !exists {
-					c := NewCommonCoin(a.Id, a.Slot, a.Tag, msg.Round, a.PubKey, a.PubKeys, a.PrivKey)
+					c := NewCommonCoin(uint(a.F), a.Id, a.Slot, tag, msg.Round, a.PubKey, a.PubKeys, a.PrivKey)
 					coinValue, err := c.SampleCoin(ctx, broadcastCommonCoin, receiveChannelCommonCoin) // Algorithm 1:9
 					if err != nil {
 						return 0, err
@@ -323,7 +321,7 @@ func (a *ABA) Run(ctx context.Context, valueInput byte, broadcast func(ABAMessag
 							MsgType:    MsgFinish,
 							Source:     a.Id,
 							Slot:       a.Slot,
-							Tag:        a.Tag,
+							Tag:        tag,
 							Round:      msg.Round,
 							Estimative: sr,
 						})
@@ -350,7 +348,7 @@ func (a *ABA) Run(ctx context.Context, valueInput byte, broadcast func(ABAMessag
 						MsgType:    MsgInit,
 						Source:     a.Id,
 						Slot:       a.Slot,
-						Tag:        a.Tag,
+						Tag:        tag,
 						Round:      next_round,
 						Estimative: estimative[next_round],
 					})

@@ -22,9 +22,6 @@ func TestAlea(t *testing.T) {
 				3: []byte("Goodbye"),
 				4: []byte("Planet"),
 			},
-			StartDelay: nil,
-			DeadNodes:  nil,
-			FaultySig:  nil,
 		})
 	})
 
@@ -37,13 +34,10 @@ func TestAlea(t *testing.T) {
 				3: []byte("reag"),
 				4: []byte("h4rger"),
 			},
-			StartDelay: nil,
-			DeadNodes:  nil,
-			FaultySig:  nil,
 		})
 	})
 
-	t.Run("stagged start", func(t *testing.T) {
+	t.Run("stagger start", func(t *testing.T) {
 		testAlea(t, testParametersAlea{
 			Slot: 0,
 			InputValue: map[uint][]byte{
@@ -58,8 +52,6 @@ func TestAlea(t *testing.T) {
 				3: 2 * time.Second,
 				4: 3 * time.Second,
 			},
-			DeadNodes: nil,
-			FaultySig: nil,
 		})
 	})
 
@@ -72,11 +64,9 @@ func TestAlea(t *testing.T) {
 				3: []byte("Goodbye"),
 				4: []byte("Planet"),
 			},
-			StartDelay: nil,
 			DeadNodes: map[uint]bool{
 				1: true,
 			},
-			FaultySig: nil,
 		})
 	})
 
@@ -89,8 +79,6 @@ func TestAlea(t *testing.T) {
 				3: []byte("Goodbye"),
 				4: []byte("Planet"),
 			},
-			StartDelay: nil,
-			DeadNodes:  nil,
 			FaultySig:  map[uint]bool{
 				1: true,
 			},
@@ -112,7 +100,6 @@ func TestAlea(t *testing.T) {
 				3: 2 * time.Second,
 				4: 2 * time.Second, //if this is 3s then a lot of ABA rounds will pass and fill channel buffer
 			},
-			DeadNodes:  nil,
 			FaultySig:  map[uint]bool{
 				1: true,
 			},
@@ -250,14 +237,14 @@ func testAlea(t *testing.T, p testParametersAlea) {
 			valueChannel := make(chan []byte, 1)
 			valueChannel <- []byte("test")
 
-			a := NewAlea(n, f)
+			a := NewAlea(n, f, uint(id), p.Slot, public, pubKeys, shares[id])
 
 			a.Subscribe(func(ctx context.Context, result []byte) error {
 				outputChannel <- result
 				return nil
 			})
 
-			err := a.Run(ctx, uint(id), 1, valueChannel, public, pubKeys, shares[id], broadcastABA, abaChannels[i], broadcastCommonCoin, commonCoinChannels[i], broadcastVCBC, unicastVCBC, vcbcChannels[i])
+			err := a.Run(ctx, valueChannel, broadcastABA, abaChannels[i], broadcastCommonCoin, commonCoinChannels[i], broadcastVCBC, unicastVCBC, vcbcChannels[i])
 			if !decided {
 				require.NoError(t, err)
 			}
