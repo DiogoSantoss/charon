@@ -14,22 +14,24 @@ import (
 func TestCommonCoin(t *testing.T) {
 	t.Run("happy 0", func(t *testing.T) {
 		testCommonCoin(t, testParametersCoin{
-			Round:      0,
-			StartDelay: nil,
-			Slot:       0,
+			Slot:  0,
+			Tag:   0,
+			Round: 0,
 		})
 	})
 
 	t.Run("happy 1", func(t *testing.T) {
 		testCommonCoin(t, testParametersCoin{
-			Round:      0,
-			StartDelay: nil,
-			Slot:       1,
+			Slot:  1,
+			Tag:   0,
+			Round: 0,
 		})
 	})
 
 	t.Run("stagger start", func(t *testing.T) {
 		testCommonCoin(t, testParametersCoin{
+			Slot:  0,
+			Tag:   0,
 			Round: 0,
 			StartDelay: map[uint]time.Duration{
 				1: 1 * time.Second * 0,
@@ -37,22 +39,24 @@ func TestCommonCoin(t *testing.T) {
 				3: 1 * time.Second * 2,
 				4: 1 * time.Second * 3,
 			},
-			Slot: 1,
 		})
 	})
 
 	t.Run("one dead", func(t *testing.T) {
 		testCommonCoin(t, testParametersCoin{
+			Slot:  0,
+			Tag:   0,
 			Round: 0,
 			DeadNodes: map[uint]bool{
 				1: true,
 			},
-			Slot: 1,
 		})
 	})
 
 	t.Run("faulty signature", func(t *testing.T) {
 		testCommonCoin(t, testParametersCoin{
+			Slot:  0,
+			Tag:   0,
 			Round: 0,
 			StartDelay: map[uint]time.Duration{
 				1: 1 * time.Second * 0,
@@ -63,20 +67,20 @@ func TestCommonCoin(t *testing.T) {
 			FaultySig: map[uint]bool{
 				1: true,
 			},
-			Slot: 1,
 		})
 	})
 }
 
 type testParametersCoin struct {
-	Round      uint
 	Slot       uint
+	Tag        uint
+	Round      uint
 	StartDelay map[uint]time.Duration
 	DeadNodes  map[uint]bool
 	FaultySig  map[uint]bool
 }
 
-func testCommonCoin(t *testing.T, test testParametersCoin) {
+func testCommonCoin(t *testing.T, p testParametersCoin) {
 
 	secret, _ := tbls.GenerateSecretKey()
 	public, _ := tbls.SecretToPublicKey(secret)
@@ -114,7 +118,7 @@ func testCommonCoin(t *testing.T, test testParametersCoin) {
 	var wg sync.WaitGroup
 	// Don't wait for processes that have faulty signatures
 	// since they may never finish
-	wg.Add(n - len(test.FaultySig))
+	wg.Add(n - len(p.FaultySig))
 
 	// Spawn go routines to participate in protocol
 	for i := 0; i < n; i++ {
@@ -124,28 +128,30 @@ func testCommonCoin(t *testing.T, test testParametersCoin) {
 		go func(i int) {
 			defer wg.Done()
 
-			if test.StartDelay != nil {
-				if delay, ok := test.StartDelay[uint(id)]; ok {
+			if p.StartDelay != nil {
+				if delay, ok := p.StartDelay[uint(id)]; ok {
 					time.Sleep(delay)
 				}
 			}
 
-			if test.DeadNodes != nil {
-				if _, ok := test.DeadNodes[uint(id)]; ok {
+			if p.DeadNodes != nil {
+				if _, ok := p.DeadNodes[uint(id)]; ok {
 					t.Logf("node %d is dead", id)
 					return
 				}
 			}
 
-			if test.FaultySig != nil {
-				if _, ok := test.FaultySig[uint(id)]; ok {
+			if p.FaultySig != nil {
+				if _, ok := p.FaultySig[uint(id)]; ok {
 					t.Logf("node %d has faulty signature", id)
 					secret, _ := tbls.GenerateSecretKey()
 					shares[id] = secret
 				}
 			}
 
-			result, err := SampleCoin(ctx, uint(id), test.Slot, 0, test.Round, public, pubKeys, shares[id], broadcast, channels[i])
+			c := NewCommonCoin(uint(id), p.Slot, p.Tag, p.Round, public, pubKeys, shares[id])
+
+			result, err := c.SampleCoin(ctx, broadcast, channels[i])
 			if err != nil {
 				require.Failf(t, err.Error(), "aba execution %d failed", id)
 			}

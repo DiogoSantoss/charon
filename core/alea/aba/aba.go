@@ -279,7 +279,8 @@ func (a *ABA) Run(ctx context.Context, id uint, slot uint, tag uint, pubKey tbls
 
 				sr, exists := coinResult[msg.Round]
 				if !exists {
-					coinValue, err := SampleCoin(ctx, id, slot, tag, msg.Round, pubKey, pubKeys, privKey, broadcastCommonCoin, receiveChannelCommonCoin) // Algorithm 1:9
+					c := NewCommonCoin(id, slot, tag, msg.Round, pubKey, pubKeys, privKey)
+					coinValue, err := c.SampleCoin(ctx, broadcastCommonCoin, receiveChannelCommonCoin) // Algorithm 1:9
 					if err != nil {
 						return 0, err
 					}

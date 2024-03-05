@@ -9,7 +9,8 @@ import (
 )
 
 func TestGetCommonCoinName(t *testing.T) {
-	coinName, err := getCommonCoinName(0, 0, 0)
+	c := NewCommonCoin(0, 0, 0, 0, tbls.PublicKey{}, map[uint]tbls.PublicKey{}, tbls.PrivateKey{})
+	coinName, err := c.getCommonCoinName()
 	require.NoError(t, err)
 	require.NotEmpty(t, coinName)
 }
@@ -27,12 +28,14 @@ func TestGetCommonCoinResult(t *testing.T) {
 
 	// wait for f+1 before revealing the coin
 	for i := 0; i < 2; i++ {
-		signature, err := getCommonCoinNameSigned(0, 0, 0, shares[i+1])
+		c := NewCommonCoin(0, 0, 0, 0, public, map[uint]tbls.PublicKey{}, shares[i+1])
+		signature, err := c.getCommonCoinNameSigned()
 		require.NoError(t, err)
 		signatures[i+1] = signature
 	}
 
-	result, err := getCommonCoinResult(ctx, 0, 0, 0, public, signatures)
+	c := NewCommonCoin(0, 0, 0, 0, public, map[uint]tbls.PublicKey{}, shares[0])
+	result, err := c.getCommonCoinResult(ctx, signatures)
 	require.NoError(t, err)
 
 	require.Condition(t, func() (success bool) {
