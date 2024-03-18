@@ -1,4 +1,4 @@
-package aba
+package commoncoin
 
 import (
 	"context"
@@ -11,79 +11,45 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/obolnetwork/charon/app/log"
-	"github.com/obolnetwork/charon/core/alea/commoncoin"
 	"github.com/obolnetwork/charon/tbls"
 )
 
-func TestABA(t *testing.T) {
+func TestCommonCoin(t *testing.T) {
 	t.Run("happy 0", func(t *testing.T) {
-		testABA(t, testParametersABA{
+		testCommonCoin(t, testParametersCoin{
 			Instance:       0,
 			AgreementRound: 0,
-			InputValue: map[int64]byte{
-				1: 1,
-				2: 1,
-				3: 1,
-				4: 1,
-			},
+			AbaRound:       0,
 		})
 	})
 
 	t.Run("happy 1", func(t *testing.T) {
-		testABA(t, testParametersABA{
+		testCommonCoin(t, testParametersCoin{
 			Instance:       1,
 			AgreementRound: 1,
-			InputValue: map[int64]byte{
-				1: 0,
-				2: 0,
-				3: 0,
-				4: 0,
-			},
-		})
-	})
-
-	t.Run("different input", func(t *testing.T) {
-		testABA(t, testParametersABA{
-			Instance:       0,
-			AgreementRound: 0,
-			InputValue: map[int64]byte{
-				1: 1,
-				2: 0,
-				3: 1,
-				4: 0,
-			},
+			AbaRound:       1,
 		})
 	})
 
 	t.Run("stagger start", func(t *testing.T) {
-		testABA(t, testParametersABA{
+		testCommonCoin(t, testParametersCoin{
 			Instance:       0,
 			AgreementRound: 0,
-			InputValue: map[int64]byte{
-				1: 1,
-				2: 1,
-				3: 1,
-				4: 1,
-			},
+			AbaRound:       0,
 			StartDelay: map[int64]time.Duration{
-				1: time.Second * 0,
-				2: time.Second * 1,
-				3: time.Second * 2,
-				4: time.Second * 3,
+				1: 1 * time.Second * 0,
+				2: 1 * time.Second * 1,
+				3: 1 * time.Second * 2,
+				4: 1 * time.Second * 3,
 			},
 		})
 	})
 
 	t.Run("one dead", func(t *testing.T) {
-		testABA(t, testParametersABA{
+		testCommonCoin(t, testParametersCoin{
 			Instance:       0,
 			AgreementRound: 0,
-			InputValue: map[int64]byte{
-				1: 1,
-				2: 1,
-				3: 1,
-				4: 1,
-			},
+			AbaRound:       0,
 			DeadNodes: map[int64]bool{
 				1: true,
 			},
@@ -91,20 +57,15 @@ func TestABA(t *testing.T) {
 	})
 
 	t.Run("faulty signature", func(t *testing.T) {
-		testABA(t, testParametersABA{
+		testCommonCoin(t, testParametersCoin{
 			Instance:       0,
 			AgreementRound: 0,
-			InputValue: map[int64]byte{
-				1: 1,
-				2: 1,
-				3: 1,
-				4: 1,
-			},
+			AbaRound:       0,
 			StartDelay: map[int64]time.Duration{
-				1: time.Second * 0,
-				2: time.Second * 1,
-				3: time.Second * 4,
-				4: time.Second * 5,
+				1: 1 * time.Second * 0,
+				2: 1 * time.Second * 1,
+				3: 1 * time.Second * 2,
+				4: 1 * time.Second * 3,
 			},
 			FaultySig: map[int64]bool{
 				1: true,
@@ -113,20 +74,21 @@ func TestABA(t *testing.T) {
 	})
 }
 
-type testParametersABA struct {
+type testParametersCoin struct {
 	Instance       int64
 	AgreementRound int64
-	InputValue     map[int64]byte
+	AbaRound       int64
 	StartDelay     map[int64]time.Duration
 	DeadNodes      map[int64]bool
 	FaultySig      map[int64]bool
 }
 
-func testABA(t *testing.T, params testParametersABA) {
+func testCommonCoin(t *testing.T, p testParametersCoin) {
 
+	// Number of go routines and threshold size
 	const (
 		f = 1
-		n = 3*f + 1
+		n = 3*f +1
 	)
 
 	secret, _ := tbls.GenerateSecretKey()
@@ -139,28 +101,16 @@ func testABA(t *testing.T, params testParametersABA) {
 		pubKeys[int64(i)], _ = tbls.SecretToPublicKey(share)
 	}
 
-	if params.FaultySig != nil {
-		for k, v := range params.FaultySig {
-			if v {
-				t.Logf("node %d has faulty signature", k)
-				secret, _ := tbls.GenerateSecretKey()
-				shares[int(k)] = secret
-			}
-		}
-	}
-
-	// Create channels
-	commonCoinChannels := make([]chan commoncoin.CommonCoinMessage[int64], n)
-	abaChannels := make([]chan ABAMessage[int64], n)
+	// Channels for communication
+	channels := make([]chan CommonCoinMessage[int64], n)
 	for i := 0; i < n; i++ {
-		commonCoinChannels[i] = make(chan commoncoin.CommonCoinMessage[int64], 1000)
-		abaChannels[i] = make(chan ABAMessage[int64], 1000)
+		channels[i] = make(chan CommonCoinMessage[int64], n)
 	}
 
 	// Store results
 	resultChan := make(chan byte)
 	resultsList := make([]byte, 0)
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -173,27 +123,13 @@ func testABA(t *testing.T, params testParametersABA) {
 		id := i + 1
 
 		trans := Transport[int64]{
-			Broadcast: func(ctx context.Context, msg ABAMessage[int64]) error {
-				for _, channel := range abaChannels {
+			Broadcast: func(ctx context.Context, msg CommonCoinMessage[int64]) error {
+				for _, channel := range channels {
 					channel <- msg
 				}
 				return nil
 			},
-			Receive: abaChannels[i],
-		}
-
-		transCoin := commoncoin.Transport[int64]{
-			Broadcast: func(ctx context.Context, msg commoncoin.CommonCoinMessage[int64]) error {
-				for _, channel := range commonCoinChannels {
-					channel <- msg
-				}
-				return nil
-			},
-			Receive: commonCoinChannels[i],
-		}
-
-		defs := Definition{
-			Nodes: n,
+			Receive: channels[i],
 		}
 
 		getCommonCoinName := func(instance, agreementRound, abaRound int64) ([]byte, error) {
@@ -202,7 +138,7 @@ func testABA(t *testing.T, params testParametersABA) {
 			return nonce[:], nil
 		}
 
-		defsCoin := commoncoin.Definition[int64]{
+		defs := Definition[int64]{
 			GetCommonCoinName: getCommonCoinName,
 			GetCommonCoinNameSigned: func(instance, agreementRound, abaRound int64) (tbls.Signature, error) {
 				name, err := getCommonCoinName(instance, agreementRound, abaRound)
@@ -239,20 +175,28 @@ func testABA(t *testing.T, params testParametersABA) {
 		go func(i int) {
 			defer wg.Done()
 
-			if params.StartDelay != nil {
-				if delay, ok := params.StartDelay[int64(id)]; ok {
+			if p.StartDelay != nil {
+				if delay, ok := p.StartDelay[int64(id)]; ok {
 					time.Sleep(delay)
 				}
 			}
 
-			if params.DeadNodes != nil {
-				if _, ok := params.DeadNodes[int64(id)]; ok {
+			if p.DeadNodes != nil {
+				if _, ok := p.DeadNodes[int64(id)]; ok {
 					t.Logf("node %d is dead", id)
 					return
 				}
 			}
 
-			result, err := Run(ctx, defs, trans, defsCoin, transCoin, params.Instance, int64(id), params.AgreementRound, params.InputValue[int64(id)])
+			if p.FaultySig != nil {
+				if _, ok := p.FaultySig[int64(id)]; ok {
+					t.Logf("node %d has faulty signature", id)
+					secret, _ := tbls.GenerateSecretKey()
+					shares[id] = secret
+				}
+			}
+
+			result, err := SampleCoin(ctx, defs, trans, p.Instance, p.AgreementRound, p.AbaRound, int64(id))
 			if err != nil {
 				require.Failf(t, err.Error(), "aba execution %d failed", id)
 			}
@@ -264,8 +208,7 @@ func testABA(t *testing.T, params testParametersABA) {
 		wg.Wait()
 		close(resultChan)
 		for i := 0; i < n; i++ {
-			close(commonCoinChannels[i])
-			close(abaChannels[i])
+			close(channels[i])
 		}
 	}()
 

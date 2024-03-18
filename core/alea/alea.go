@@ -8,90 +8,52 @@ import (
 
 	"github.com/obolnetwork/charon/app/log"
 	"github.com/obolnetwork/charon/app/z"
-	"github.com/obolnetwork/charon/core"
 	"github.com/obolnetwork/charon/core/alea/aba"
+	"github.com/obolnetwork/charon/core/alea/commoncoin"
 	"github.com/obolnetwork/charon/core/alea/vcbc"
 	"github.com/obolnetwork/charon/tbls"
 )
 
-type Alea struct {
-	/*
-		tcpNode host.Host
-		sender  *p2p.Sender
-		peers   []p2p.Peer
-		p2pKey  *k1.PrivateKey
+type Definition[I any, V comparable] struct {
+	GetLeader func(instance I, agreementRound int64) int64
+	SignData  func(data []byte) (tbls.Signature, error)
+	Output    func(ctx context.Context, result V) error
 
-		subs []func(context.Context, core.Duty, core.UnsignedDataSet) error
-	*/
-
-	N       int
-	F       int
-	Id      uint
-	Slot    uint // PoS slot
-	PubKey  tbls.PublicKey
-	PubKeys map[uint]tbls.PublicKey
-	PrivKey tbls.PrivateKey
-	Subs    []func(ctx context.Context, result []byte) error
-}
-
-func NewAlea(n int, f int, id uint, slot uint, pubKey tbls.PublicKey, pubKeys map[uint]tbls.PublicKey, privKey tbls.PrivateKey) *Alea {
-	return &Alea{
-		N:       n,
-		F:       f,
-		Id:      id,
-		Slot:    slot,
-		PubKey:  pubKey,
-		PubKeys: pubKeys,
-		PrivKey: privKey,
-	}
-}
-
-func (a *Alea) Start(ctx context.Context) {
-	// WIP
-	// register handler for incoming messages
-	/*
-		need protocolID
-		need to define message types
-	*/
-	//p2p.RegisterHandler("alea", a.tcpNode, protocolID, func() proto.Message { return new() })
+	Nodes int
 }
 
 /*
-func (a *Alea) Subscribe(fn func(ctx context.Context, duty core.Duty, set core.UnsignedDataSet) error) {
-	a.subs = append(a.subs, fn)
-}
-*/
+	Questions:
 
-func (a *Alea) Participate(context.Context, core.Duty) error {
-	// WIP
-	return nil
-}
-
-func (a *Alea) Propose(ctx context.Context, duty core.Duty, data core.UnsignedDataSet) error {
-	// WIP
-	return nil
-}
-
-func (a *Alea) Subscribe(fn func(ctx context.Context, result []byte) error) {
-	a.Subs = append(a.Subs, fn)
-}
-
-/*
 	How to avoid active wait
 	Error (in error.err) concurrent ite and write that should not exist
 	How to handle errors inside goroutines ?
-
 
 	How to use the networking layer instead of hand made channels ?
 	How to separate protocol messages so that ,e.g., ABA doesn't try to handle VCBC messages ?
 		anything to do with p2p.RegisterHandler ?
 	How to test using peer to peer network ?
+
+    Why do we need [I any, V comparable] ?
+		I is for instance (used as Core.Duty to identify a unique consensu instance)
+		V is for the value being agreed upon
+
+		Should instance have more parameters in this case ? (agreementRound, abaRound, etc) ?
+
+		How to log with this generic instance ?
+			Can pass message logs using definition
+
+
 */
 
-func (a *Alea) Run(ctx context.Context, valueChannel chan []byte,
-	broadcastAba func(aba.ABAMessage) error, receiveAba chan aba.ABAMessage,
-	broadcastCommonCoin func(aba.CommonCoinMessage) error, receiveCommonCoin chan aba.CommonCoinMessage,
-	broadcastVCBC func(vcbc.VCBCMessage) error, unicastVCBC func(uint, vcbc.VCBCMessage) error, receiveVCBC chan vcbc.VCBCMessage) (err error) {
+func Run[I any, V comparable](
+	ctx context.Context,
+	d Definition[I, V],
+	dVCBC vcbc.Definition[I, V], tVCBC vcbc.Transport[V],
+	dABA aba.Definition, tABA aba.Transport[I],
+	dCoin commoncoin.Definition[I], tCoin commoncoin.Transport[I],
+	instance I, process int64, inputValueCh <-chan V,
+) (err error) {
 
 	defer func() {
 		// Panics are used for assertions and sanity checks to reduce lines of code
@@ -106,41 +68,36 @@ func (a *Alea) Run(ctx context.Context, valueChannel chan []byte,
 
 	ctx = log.WithTopic(ctx, "alea")
 
-	log.Info(ctx, "Starting Alea", z.Uint("id", a.Id))
+	log.Info(ctx, "Starting Alea", z.I64("id", process))
 
 	// === State ===
 	var (
-		abaInstance       *aba.ABA   = aba.NewABA(a.N, a.F, a.Id, a.Slot, a.PubKey, a.PubKeys, a.PrivKey)
-		vcbcInstance      *vcbc.VCBC = vcbc.NewVCBC(a.N, a.F, a.Id, a.Slot, a.PubKey, a.PubKeys, a.PrivKey)
-		agreementRound    uint       = 0
+		agreementRound    int64 = 0
 		valuePerPeerMutex sync.Mutex
-		valuePerPeer      = make(map[uint][]byte)
+		valuePerPeer      = make(map[int64]V)
 	)
 
-	getLeaderId := func() uint {
-		return agreementRound%uint(a.N) + 1
-	}
-
-	// Store result of VCBC
-	vcbcInstance.Subscribe(func(ctx context.Context, result vcbc.VCBCResult) error {
-
+	// TODO is this ok ? we are creating the vcbc definition outside but defining output inside
+	// We could also have a subscriber pattern but alea is the only one that uses vcbc output
+	dVCBC.Output = func(ctx context.Context, result vcbc.VCBCResult[V]) error {
 		valuePerPeerMutex.Lock()
-		valuePerPeer[vcbc.IdFromTag(result.Tag)] = result.Message
-		valuePerPeerMutex.Unlock()
+		defer valuePerPeerMutex.Unlock()
 
-		log.Info(ctx, "Node id has value from source", z.Uint("id", a.Id), z.Uint("slot", a.Slot), z.Uint("source", vcbc.IdFromTag(result.Tag)))
+		valuePerPeer[dVCBC.IdFromTag(result.Tag)] = result.Result
+
+		log.Info(ctx, "Node id has value from source", z.I64("id", process), z.I64("source", dVCBC.IdFromTag(result.Tag)))
 		return nil
-	})
+	}
 
 	{
 		// Broadcast component
 		go func() {
-			log.Info(ctx, "Starting broadcast component", z.Uint("id", a.Id), z.Uint("slot", a.Slot))
-			for value := range valueChannel {
+			log.Info(ctx, "Starting broadcast component", z.I64("id", process))
+			for value := range inputValueCh {
 				// Close channel since only one value is expected per consensus instance
-				valueChannel = nil
-				log.Info(ctx, "Broadcasting value", z.Uint("id", a.Id), z.Uint("slot", a.Slot))
-				err := vcbcInstance.Run(ctx, value, broadcastVCBC, unicastVCBC, receiveVCBC)
+				inputValueCh = nil
+				log.Info(ctx, "Broadcasting value", z.I64("id", process))
+				err := vcbc.Run[I, V](ctx, dVCBC, tVCBC, instance, process, value)
 				if err != nil {
 					// TODO how handle error?
 				}
@@ -149,31 +106,37 @@ func (a *Alea) Run(ctx context.Context, valueChannel chan []byte,
 
 		// Agreement component
 		go func() {
-			log.Info(ctx, "Starting agreement component", z.Uint("id", a.Id))
+			log.Info(ctx, "Starting agreement component", z.I64("id", process))
 
 			for {
-				leaderId := getLeaderId()
+				leaderId := d.GetLeader(instance, agreementRound)
+
 				valuePerPeerMutex.Lock()
-				value := valuePerPeer[leaderId]
+				_, exists := valuePerPeer[leaderId]
 				valuePerPeerMutex.Unlock()
+
 				proposal := byte(0)
-				if value != nil {
+				if exists {
 					proposal = byte(1)
 				}
-				log.Info(ctx, "Starting agreement round with leader and proposal", z.Uint("id", a.Id), z.Uint("slot", a.Slot), z.Uint("tag", agreementRound), z.Uint("leaderId", leaderId), z.Uint("proposal", uint(proposal)))
-				result, err := abaInstance.Run(ctx, agreementRound, proposal, broadcastAba, receiveAba, broadcastCommonCoin, receiveCommonCoin)
-				log.Info(ctx, "Received result from ABA", z.Uint("id", a.Id), z.Uint("slot", a.Slot), z.Uint("tag", agreementRound), z.Uint("result", uint(result)))
+
+				log.Info(ctx, "Starting agreement round with leader and proposal", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("leaderId", leaderId), z.Uint("proposal", uint(proposal)))
+
+				result, err := aba.Run(ctx, dABA, tABA, dCoin, tCoin, instance, process, agreementRound, proposal)
+
+				log.Info(ctx, "Received result from ABA", z.I64("id", process), z.I64("agreementRound", agreementRound), z.Uint("result", uint(result)))
 				if err != nil {
 					// TODO how handle error?
 				}
 
 				if result == 1 {
 					valuePerPeerMutex.Lock()
-					value := valuePerPeer[leaderId]
+					value, exists := valuePerPeer[leaderId]
 					valuePerPeerMutex.Unlock()
-					if value == nil {
-						log.Info(ctx, "Leader value not found, requesting value", z.Uint("id", a.Id), z.Uint("slot", a.Slot), z.Uint("tag", agreementRound), z.Uint("leaderId", leaderId))
-						err = vcbcInstance.BroadcastRequest(ctx, vcbc.BuildTag(leaderId, a.Slot), broadcastVCBC)
+
+					if !exists {
+						log.Info(ctx, "Leader value not found, requesting value", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("leaderId", leaderId))
+						err = vcbc.BroadcastRequest(ctx, dVCBC, tVCBC, instance, process, dVCBC.BuildTag(instance, process))
 						if err != nil {
 							// TODO how handle error?
 						}
@@ -181,20 +144,14 @@ func (a *Alea) Run(ctx context.Context, valueChannel chan []byte,
 						// TODO Should not active wait for the value
 						// How ?
 						for {
-							// Technically, if this has been filled, no one will be writing to it again
-							// so no need to lock from here onwards
-							if valuePerPeer[leaderId] != nil {
+							if value, exists = valuePerPeer[leaderId]; exists {
 								break
 							}
 						}
 					}
 
-					log.Info(ctx, "Agreement reached", z.Uint("id", a.Id), z.Uint("slot", a.Slot), z.Uint("tag", agreementRound))
-					for _, sub := range a.Subs {
-						valuePerPeerMutex.Lock()
-						sub(ctx, valuePerPeer[leaderId])
-						valuePerPeerMutex.Unlock()
-					}
+					log.Info(ctx, "Agreement reached", z.I64("id", process), z.I64("agreementRound", agreementRound))
+					d.Output(ctx, value)
 					break
 				}
 				agreementRound += 1
