@@ -17,7 +17,7 @@ import (
 type Definition[I any, V comparable] struct {
 	GetLeader func(instance I, agreementRound int64) int64
 	SignData  func(data []byte) (tbls.Signature, error)
-	Output    func(ctx context.Context, result V) error
+	Decide    func(ctx context.Context, instance I, result V)
 
 	Nodes int
 }
@@ -77,9 +77,7 @@ func Run[I any, V comparable](
 		valuePerPeer      = make(map[int64]V)
 	)
 
-	// TODO is this ok ? we are creating the vcbc definition outside but defining output inside
-	// We could also have a subscriber pattern but alea is the only one that uses vcbc output
-	dVCBC.Output = func(ctx context.Context, result vcbc.VCBCResult[V]) error {
+	dVCBC.Subs = append(dVCBC.Subs, func(ctx context.Context, result vcbc.VCBCResult[V]) error {
 		valuePerPeerMutex.Lock()
 		defer valuePerPeerMutex.Unlock()
 
@@ -87,7 +85,7 @@ func Run[I any, V comparable](
 
 		log.Info(ctx, "Node id has value from source", z.I64("id", process), z.I64("source", dVCBC.IdFromTag(result.Tag)))
 		return nil
-	}
+	})
 
 	{
 		// Broadcast component
@@ -97,7 +95,7 @@ func Run[I any, V comparable](
 				// Close channel since only one value is expected per consensus instance
 				inputValueCh = nil
 				log.Info(ctx, "Broadcasting value", z.I64("id", process))
-				err := vcbc.Run[I, V](ctx, dVCBC, tVCBC, instance, process, value)
+				err := vcbc.Run(ctx, dVCBC, tVCBC, instance, process, value)
 				if err != nil {
 					// TODO how handle error?
 				}
@@ -151,7 +149,7 @@ func Run[I any, V comparable](
 					}
 
 					log.Info(ctx, "Agreement reached", z.I64("id", process), z.I64("agreementRound", agreementRound))
-					d.Output(ctx, value)
+					d.Decide(ctx, instance, value)
 					break
 				}
 				agreementRound += 1

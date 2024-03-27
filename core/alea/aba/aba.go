@@ -193,7 +193,7 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 	// === Algorithm ===
 	estimative[0] = valueInput // Algorithm 1:3
 
-	log.Info(ctx, "Node id has estimative", z.I64("id", process), z.I64("agreementRound", agreementRound), z.U8("value", estimative[0]))
+	log.Info(ctx, "Node id has estimative", z.I64("id", process), z.I64("agreementRound", agreementRound), z.U8("estimative", estimative[0]))
 
 	{ // Algorithm 1:4
 		err := t.Broadcast(ctx, ABAMessage[I]{
@@ -337,7 +337,7 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 						values[next_round] = make(map[byte]struct{})
 					}
 
-					log.Info(ctx, "Node id starting new round", z.I64("id", process), z.I64("agreementRound", msg.AgreementRound), z.I64("abaRound", next_round))
+					log.Info(ctx, "Node id starting new round with estimative", z.I64("id", process), z.I64("agreementRound", msg.AgreementRound), z.I64("abaRound", next_round), z.U8("estimative", estimative[next_round]))
 					err := t.Broadcast(ctx, ABAMessage[I]{
 						MsgType:        MsgInit,
 						Source:         process,

@@ -233,10 +233,10 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 			VerifyAggregateSignature: func(data []byte, signature tbls.Signature) error {
 				return tbls.Verify(public, data, signature)
 			},
-			Output: func(ctx context.Context, result VCBCResult[int64]) error {
+			Subs: []func(context.Context, VCBCResult[int64]) error{func(ctx context.Context, result VCBCResult[int64]) error {
 				outputChannel <- result
 				return nil
-			},
+			}},
 
 			Nodes: n,
 		}
@@ -259,8 +259,8 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 
 			if params.Requester != nil && params.Requester[int64(id)] {
 				// Flush the message queue to pretend that he didn't receive any messages
-				for(len(channels[i]) != 0) {
-					<- channels[i]
+				for len(channels[i]) != 0 {
+					<-channels[i]
 				}
 				go func() {
 					tag := defs.BuildTag(params.Instance, 1)

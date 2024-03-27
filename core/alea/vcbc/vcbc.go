@@ -30,7 +30,7 @@ type Definition[I any, V comparable] struct {
 	SignData                 func(data []byte) (tbls.Signature, error)
 	VerifySignature          func(process int64, data []byte, signature tbls.Signature) error
 	VerifyAggregateSignature func(data []byte, signature tbls.Signature) error
-	Output                   func(ctx context.Context, result VCBCResult[V]) error
+	Subs                     []func(ctx context.Context, result VCBCResult[V]) error
 
 	Nodes int
 }
@@ -104,7 +104,7 @@ type VCBCResult[V comparable] struct {
 
 type VCBCMessageContent struct {
 	MsgType   MsgType
-	Tag       string // Tag is an identifier of type: "ID.<id>.<slot>" where <id> is the sender id and <slot> is a sequence number
+	Tag       string // Tag is an identifier of type: "ID.<id>.<instance>" where <id> is the sender id and <instance> is an instance identifier
 	ValueHash []byte
 }
 
@@ -136,6 +136,8 @@ func classify(msgType MsgType) UponRule {
 	}
 }
 
+// BroadcastRequest sends a request to all nodes for a value with a specific tag
+// It can only be called after Run has been started since the response is expected to be handled by the Run function
 func BroadcastRequest[I any, V comparable](ctx context.Context, d Definition[I, V], t Transport[V], instance I, process int64, tag string) error {
 
 	ctx = log.WithTopic(ctx, "vcbc")
@@ -160,6 +162,7 @@ func isZeroVal[V comparable](v V) bool {
 	return v == zeroVal[V]()
 }
 
+// Run executes the VCBC protocol
 func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transport[V], instance I, process int64, value V) (err error) {
 
 	defer func() {
@@ -306,10 +309,15 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 					thresholdSigByTag[msg.Content.Tag] = msg.ThresholdSig
 
 					log.Info(ctx, "Node id received final", z.I64("id", process), z.Str("tag", msg.Content.Tag))
-					d.Output(ctx, VCBCResult[V]{
-						Tag:    msg.Content.Tag,
-						Result: messageByTag[msg.Content.Tag],
-					})
+					for _, sub := range d.Subs {
+						err := sub(ctx, VCBCResult[V]{
+							Tag:    msg.Content.Tag,
+							Result: messageByTag[msg.Content.Tag],
+						})
+						if err != nil {
+							return err
+						}
+					}
 				}
 			case UponRequest:
 				if thresholdSigByTag[msg.Content.Tag] != (tbls.Signature{}) {
@@ -353,10 +361,15 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 				if thresholdSigByTag[msg.Content.Tag] == (tbls.Signature{}) {
 					thresholdSigByTag[msg.Content.Tag] = msg.ThresholdSig
 					log.Info(ctx, "Node id received answer", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
-					d.Output(ctx, VCBCResult[V]{
-						Tag:    msg.Content.Tag,
-						Result: msg.Value,
-					})
+					for _, sub := range d.Subs {
+						err := sub(ctx, VCBCResult[V]{
+							Tag:    msg.Content.Tag,
+							Result: msg.Value,
+						})
+						if err != nil {
+							return err
+						}
+					}
 				}
 			}
 

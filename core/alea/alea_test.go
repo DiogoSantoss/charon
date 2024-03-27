@@ -43,6 +43,15 @@ func TestAlea(t *testing.T) {
 		})
 	})
 
+	t.Run("single 0", func(t *testing.T) {
+		testAlea(t, testParametersAlea{
+			Instance: 0,
+			InputValue: map[int64]int64{
+				3: 7,
+			},
+		})
+	})
+
 	t.Run("stagger start", func(t *testing.T) {
 		testAlea(t, testParametersAlea{
 			Instance: 0,
@@ -123,12 +132,7 @@ type testParametersAlea struct {
 
 // Compute the total number of messages that should be received
 func (t testParametersAlea) totalNumberMessages() int {
-	n := 0
-	for _, v := range t.InputValue {
-		if v != 0 {
-			n++
-		}
-	}
+	n := 4
 	for _, v := range t.DeadNodes {
 		if v {
 			n--
@@ -197,14 +201,13 @@ func testAlea(t *testing.T, p testParametersAlea) {
 
 		defs := Definition[int64, int64]{
 			GetLeader: func(instance, agreementRound int64) int64 {
-				return (instance + agreementRound)%int64(n) + 1
+				return (instance+agreementRound)%int64(n) + 1
 			},
 			SignData: func(data []byte) (tbls.Signature, error) {
 				return tbls.Sign(shares[id], data)
 			},
-			Output: func(ctx context.Context, result int64) error {
+			Decide: func(ctx context.Context, instance, result int64) {
 				outputChannel <- result
-				return nil
 			},
 			Nodes: n,
 		}
@@ -212,7 +215,9 @@ func testAlea(t *testing.T, p testParametersAlea) {
 		transABA := aba.Transport[int64]{
 			Broadcast: func(ctx context.Context, msg aba.ABAMessage[int64]) error {
 				for _, channel := range abaChannels {
-					channel <- msg
+					if channel != nil {
+						channel <- msg
+					}
 				}
 				return nil
 			},
@@ -232,7 +237,9 @@ func testAlea(t *testing.T, p testParametersAlea) {
 		transCoin := commoncoin.Transport[int64]{
 			Broadcast: func(ctx context.Context, msg commoncoin.CommonCoinMessage[int64]) error {
 				for _, channel := range commonCoinChannels {
-					channel <- msg
+					if channel != nil {
+						channel <- msg
+					}
 				}
 				return nil
 			},
@@ -276,7 +283,9 @@ func testAlea(t *testing.T, p testParametersAlea) {
 		transVCBC := vcbc.Transport[int64]{
 			Broadcast: func(ctx context.Context, msg vcbc.VCBCMessage[int64]) error {
 				for _, channel := range vcbcChannels {
-					channel <- msg
+					if channel != nil {
+						channel <- msg
+					}
 				}
 				return nil
 			},
@@ -338,7 +347,7 @@ func testAlea(t *testing.T, p testParametersAlea) {
 			valueChannel := make(chan int64, 1)
 			valueChannel <- p.InputValue[int64(id)]
 
-			err := Run[int64, int64](ctx, defs, defsVCBC, transVCBC, defsABA, transABA, defsCoin, transCoin, p.Instance, int64(id), valueChannel)
+			err := Run(ctx, defs, defsVCBC, transVCBC, defsABA, transABA, defsCoin, transCoin, p.Instance, int64(id), valueChannel)
 			if !decided {
 				require.NoError(t, err)
 			}

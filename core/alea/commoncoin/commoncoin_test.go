@@ -88,7 +88,7 @@ func testCommonCoin(t *testing.T, p testParametersCoin) {
 	// Number of go routines and threshold size
 	const (
 		f = 1
-		n = 3*f +1
+		n = 3*f + 1
 	)
 
 	secret, _ := tbls.GenerateSecretKey()

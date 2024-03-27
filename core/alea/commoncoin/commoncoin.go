@@ -38,17 +38,18 @@ func (d Definition[I]) Faulty() int {
 
 type CommonCoinMessage[I any] struct {
 	Source         int64
-	Instance       I    
+	Instance       I
 	AgreementRound int64 // Alea round
 	AbaRound       int64 // ABA round
 	Sig            tbls.Signature
 }
 
+// SampleCoin executes the common coin protocol
 func SampleCoin[I any](ctx context.Context, d Definition[I], t Transport[I], instance I, agreementRound int64, abaRound int64, process int64) (byte, error) {
 
 	ctx = log.WithTopic(ctx, "commoncoin")
 
-	log.Info(ctx, "Node id sampled common coin", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound))
+	log.Info(ctx, "Node id sampling common coin", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound))
 
 	// === State ===
 	var (
@@ -103,7 +104,7 @@ func SampleCoin[I any](ctx context.Context, d Definition[I], t Transport[I], ins
 					continue
 				}
 
-				log.Info(ctx, "Node id decided value", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound), z.U8("coin", result))
+				log.Info(ctx, "Node id sampled value", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound), z.U8("coin", result))
 
 				return result, nil
 			}

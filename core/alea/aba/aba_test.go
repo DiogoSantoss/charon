@@ -160,7 +160,7 @@ func testABA(t *testing.T, params testParametersABA) {
 	// Store results
 	resultChan := make(chan byte)
 	resultsList := make([]byte, 0)
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
