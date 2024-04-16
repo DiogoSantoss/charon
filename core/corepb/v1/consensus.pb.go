@@ -369,6 +369,330 @@ func (x *SniffedConsensusInstances) GetGitHash() string {
 	return ""
 }
 
+type CommonCoinMsg struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Source         int64  `protobuf:"varint,1,opt,name=source,proto3" json:"source,omitempty"`
+	Duty           *Duty  `protobuf:"bytes,2,opt,name=duty,proto3" json:"duty,omitempty"`
+	AgreementRound int64  `protobuf:"varint,3,opt,name=agreementRound,proto3" json:"agreementRound,omitempty"`
+	AbaRound       int64  `protobuf:"varint,4,opt,name=abaRound,proto3" json:"abaRound,omitempty"`
+	Sig            []byte `protobuf:"bytes,5,opt,name=sig,proto3" json:"sig,omitempty"`
+}
+
+func (x *CommonCoinMsg) Reset() {
+	*x = CommonCoinMsg{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_core_corepb_v1_consensus_proto_msgTypes[5]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *CommonCoinMsg) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommonCoinMsg) ProtoMessage() {}
+
+func (x *CommonCoinMsg) ProtoReflect() protoreflect.Message {
+	mi := &file_core_corepb_v1_consensus_proto_msgTypes[5]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CommonCoinMsg.ProtoReflect.Descriptor instead.
+func (*CommonCoinMsg) Descriptor() ([]byte, []int) {
+	return file_core_corepb_v1_consensus_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *CommonCoinMsg) GetSource() int64 {
+	if x != nil {
+		return x.Source
+	}
+	return 0
+}
+
+func (x *CommonCoinMsg) GetDuty() *Duty {
+	if x != nil {
+		return x.Duty
+	}
+	return nil
+}
+
+func (x *CommonCoinMsg) GetAgreementRound() int64 {
+	if x != nil {
+		return x.AgreementRound
+	}
+	return 0
+}
+
+func (x *CommonCoinMsg) GetAbaRound() int64 {
+	if x != nil {
+		return x.AbaRound
+	}
+	return 0
+}
+
+func (x *CommonCoinMsg) GetSig() []byte {
+	if x != nil {
+		return x.Sig
+	}
+	return nil
+}
+
+type VCBCMsgContent struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Type      int64  `protobuf:"varint,1,opt,name=type,proto3" json:"type,omitempty"`
+	Tag       string `protobuf:"bytes,2,opt,name=tag,proto3" json:"tag,omitempty"`
+	ValueHash []byte `protobuf:"bytes,3,opt,name=valueHash,proto3" json:"valueHash,omitempty"`
+}
+
+func (x *VCBCMsgContent) Reset() {
+	*x = VCBCMsgContent{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_core_corepb_v1_consensus_proto_msgTypes[6]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VCBCMsgContent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VCBCMsgContent) ProtoMessage() {}
+
+func (x *VCBCMsgContent) ProtoReflect() protoreflect.Message {
+	mi := &file_core_corepb_v1_consensus_proto_msgTypes[6]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VCBCMsgContent.ProtoReflect.Descriptor instead.
+func (*VCBCMsgContent) Descriptor() ([]byte, []int) {
+	return file_core_corepb_v1_consensus_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *VCBCMsgContent) GetType() int64 {
+	if x != nil {
+		return x.Type
+	}
+	return 0
+}
+
+func (x *VCBCMsgContent) GetTag() string {
+	if x != nil {
+		return x.Tag
+	}
+	return ""
+}
+
+func (x *VCBCMsgContent) GetValueHash() []byte {
+	if x != nil {
+		return x.ValueHash
+	}
+	return nil
+}
+
+type VCBCMsg struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Source       int64           `protobuf:"varint,1,opt,name=source,proto3" json:"source,omitempty"`
+	Duty         *Duty           `protobuf:"bytes,2,opt,name=duty,proto3" json:"duty,omitempty"`
+	Content      *VCBCMsgContent `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`
+	Value        []byte          `protobuf:"bytes,4,opt,name=value,proto3" json:"value,omitempty"`
+	PartialSig   []byte          `protobuf:"bytes,5,opt,name=partialSig,proto3" json:"partialSig,omitempty"`
+	ThresholdSig []byte          `protobuf:"bytes,6,opt,name=thresholdSig,proto3" json:"thresholdSig,omitempty"`
+}
+
+func (x *VCBCMsg) Reset() {
+	*x = VCBCMsg{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_core_corepb_v1_consensus_proto_msgTypes[7]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VCBCMsg) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VCBCMsg) ProtoMessage() {}
+
+func (x *VCBCMsg) ProtoReflect() protoreflect.Message {
+	mi := &file_core_corepb_v1_consensus_proto_msgTypes[7]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VCBCMsg.ProtoReflect.Descriptor instead.
+func (*VCBCMsg) Descriptor() ([]byte, []int) {
+	return file_core_corepb_v1_consensus_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *VCBCMsg) GetSource() int64 {
+	if x != nil {
+		return x.Source
+	}
+	return 0
+}
+
+func (x *VCBCMsg) GetDuty() *Duty {
+	if x != nil {
+		return x.Duty
+	}
+	return nil
+}
+
+func (x *VCBCMsg) GetContent() *VCBCMsgContent {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
+func (x *VCBCMsg) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *VCBCMsg) GetPartialSig() []byte {
+	if x != nil {
+		return x.PartialSig
+	}
+	return nil
+}
+
+func (x *VCBCMsg) GetThresholdSig() []byte {
+	if x != nil {
+		return x.ThresholdSig
+	}
+	return nil
+}
+
+type ABAMsg struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Type           int64   `protobuf:"varint,1,opt,name=type,proto3" json:"type,omitempty"`
+	Source         int64   `protobuf:"varint,2,opt,name=source,proto3" json:"source,omitempty"`
+	Duty           *Duty   `protobuf:"bytes,3,opt,name=duty,proto3" json:"duty,omitempty"`
+	AgreementRound int64   `protobuf:"varint,4,opt,name=agreementRound,proto3" json:"agreementRound,omitempty"`
+	Round          int64   `protobuf:"varint,5,opt,name=round,proto3" json:"round,omitempty"`
+	Estimative     int32   `protobuf:"varint,6,opt,name=estimative,proto3" json:"estimative,omitempty"`
+	Values         []int32 `protobuf:"varint,7,rep,packed,name=values,proto3" json:"values,omitempty"`
+}
+
+func (x *ABAMsg) Reset() {
+	*x = ABAMsg{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_core_corepb_v1_consensus_proto_msgTypes[8]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *ABAMsg) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ABAMsg) ProtoMessage() {}
+
+func (x *ABAMsg) ProtoReflect() protoreflect.Message {
+	mi := &file_core_corepb_v1_consensus_proto_msgTypes[8]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ABAMsg.ProtoReflect.Descriptor instead.
+func (*ABAMsg) Descriptor() ([]byte, []int) {
+	return file_core_corepb_v1_consensus_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ABAMsg) GetType() int64 {
+	if x != nil {
+		return x.Type
+	}
+	return 0
+}
+
+func (x *ABAMsg) GetSource() int64 {
+	if x != nil {
+		return x.Source
+	}
+	return 0
+}
+
+func (x *ABAMsg) GetDuty() *Duty {
+	if x != nil {
+		return x.Duty
+	}
+	return nil
+}
+
+func (x *ABAMsg) GetAgreementRound() int64 {
+	if x != nil {
+		return x.AgreementRound
+	}
+	return 0
+}
+
+func (x *ABAMsg) GetRound() int64 {
+	if x != nil {
+		return x.Round
+	}
+	return 0
+}
+
+func (x *ABAMsg) GetEstimative() int32 {
+	if x != nil {
+		return x.Estimative
+	}
+	return 0
+}
+
+func (x *ABAMsg) GetValues() []int32 {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
 var File_core_corepb_v1_consensus_proto protoreflect.FileDescriptor
 
 var file_core_corepb_v1_consensus_proto_rawDesc = []byte{
@@ -437,11 +761,54 @@ var file_core_corepb_v1_consensus_proto_rawDesc = []byte{
 	0x66, 0x65, 0x64, 0x43, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x49, 0x6e, 0x73, 0x74,
 	0x61, 0x6e, 0x63, 0x65, 0x52, 0x09, 0x69, 0x6e, 0x73, 0x74, 0x61, 0x6e, 0x63, 0x65, 0x73, 0x12,
 	0x19, 0x0a, 0x08, 0x67, 0x69, 0x74, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x02, 0x20, 0x01, 0x28,
-	0x09, 0x52, 0x07, 0x67, 0x69, 0x74, 0x48, 0x61, 0x73, 0x68, 0x42, 0x2e, 0x5a, 0x2c, 0x67, 0x69,
-	0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6f, 0x62, 0x6f, 0x6c, 0x6e, 0x65, 0x74,
-	0x77, 0x6f, 0x72, 0x6b, 0x2f, 0x63, 0x68, 0x61, 0x72, 0x6f, 0x6e, 0x2f, 0x63, 0x6f, 0x72, 0x65,
-	0x2f, 0x63, 0x6f, 0x72, 0x65, 0x70, 0x62, 0x2f, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74,
-	0x6f, 0x33,
+	0x09, 0x52, 0x07, 0x67, 0x69, 0x74, 0x48, 0x61, 0x73, 0x68, 0x22, 0xa7, 0x01, 0x0a, 0x0d, 0x43,
+	0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x43, 0x6f, 0x69, 0x6e, 0x4d, 0x73, 0x67, 0x12, 0x16, 0x0a, 0x06,
+	0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x73, 0x6f,
+	0x75, 0x72, 0x63, 0x65, 0x12, 0x28, 0x0a, 0x04, 0x64, 0x75, 0x74, 0x79, 0x18, 0x02, 0x20, 0x01,
+	0x28, 0x0b, 0x32, 0x14, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x70, 0x62,
+	0x2e, 0x76, 0x31, 0x2e, 0x44, 0x75, 0x74, 0x79, 0x52, 0x04, 0x64, 0x75, 0x74, 0x79, 0x12, 0x26,
+	0x0a, 0x0e, 0x61, 0x67, 0x72, 0x65, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x52, 0x6f, 0x75, 0x6e, 0x64,
+	0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0e, 0x61, 0x67, 0x72, 0x65, 0x65, 0x6d, 0x65, 0x6e,
+	0x74, 0x52, 0x6f, 0x75, 0x6e, 0x64, 0x12, 0x1a, 0x0a, 0x08, 0x61, 0x62, 0x61, 0x52, 0x6f, 0x75,
+	0x6e, 0x64, 0x18, 0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x08, 0x61, 0x62, 0x61, 0x52, 0x6f, 0x75,
+	0x6e, 0x64, 0x12, 0x10, 0x0a, 0x03, 0x73, 0x69, 0x67, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0c, 0x52,
+	0x03, 0x73, 0x69, 0x67, 0x22, 0x54, 0x0a, 0x0e, 0x56, 0x43, 0x42, 0x43, 0x4d, 0x73, 0x67, 0x43,
+	0x6f, 0x6e, 0x74, 0x65, 0x6e, 0x74, 0x12, 0x12, 0x0a, 0x04, 0x74, 0x79, 0x70, 0x65, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x03, 0x52, 0x04, 0x74, 0x79, 0x70, 0x65, 0x12, 0x10, 0x0a, 0x03, 0x74, 0x61,
+	0x67, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x74, 0x61, 0x67, 0x12, 0x1c, 0x0a, 0x09,
+	0x76, 0x61, 0x6c, 0x75, 0x65, 0x48, 0x61, 0x73, 0x68, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0c, 0x52,
+	0x09, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x48, 0x61, 0x73, 0x68, 0x22, 0xdf, 0x01, 0x0a, 0x07, 0x56,
+	0x43, 0x42, 0x43, 0x4d, 0x73, 0x67, 0x12, 0x16, 0x0a, 0x06, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x12, 0x28,
+	0x0a, 0x04, 0x64, 0x75, 0x74, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x14, 0x2e, 0x63,
+	0x6f, 0x72, 0x65, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x70, 0x62, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x75,
+	0x74, 0x79, 0x52, 0x04, 0x64, 0x75, 0x74, 0x79, 0x12, 0x38, 0x0a, 0x07, 0x63, 0x6f, 0x6e, 0x74,
+	0x65, 0x6e, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1e, 0x2e, 0x63, 0x6f, 0x72, 0x65,
+	0x2e, 0x63, 0x6f, 0x72, 0x65, 0x70, 0x62, 0x2e, 0x76, 0x31, 0x2e, 0x56, 0x43, 0x42, 0x43, 0x4d,
+	0x73, 0x67, 0x43, 0x6f, 0x6e, 0x74, 0x65, 0x6e, 0x74, 0x52, 0x07, 0x63, 0x6f, 0x6e, 0x74, 0x65,
+	0x6e, 0x74, 0x12, 0x14, 0x0a, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28,
+	0x0c, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x12, 0x1e, 0x0a, 0x0a, 0x70, 0x61, 0x72, 0x74,
+	0x69, 0x61, 0x6c, 0x53, 0x69, 0x67, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0a, 0x70, 0x61,
+	0x72, 0x74, 0x69, 0x61, 0x6c, 0x53, 0x69, 0x67, 0x12, 0x22, 0x0a, 0x0c, 0x74, 0x68, 0x72, 0x65,
+	0x73, 0x68, 0x6f, 0x6c, 0x64, 0x53, 0x69, 0x67, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0c,
+	0x74, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x53, 0x69, 0x67, 0x22, 0xd4, 0x01, 0x0a,
+	0x06, 0x41, 0x42, 0x41, 0x4d, 0x73, 0x67, 0x12, 0x12, 0x0a, 0x04, 0x74, 0x79, 0x70, 0x65, 0x18,
+	0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x04, 0x74, 0x79, 0x70, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x73,
+	0x6f, 0x75, 0x72, 0x63, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x73, 0x6f, 0x75,
+	0x72, 0x63, 0x65, 0x12, 0x28, 0x0a, 0x04, 0x64, 0x75, 0x74, 0x79, 0x18, 0x03, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x14, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x70, 0x62, 0x2e,
+	0x76, 0x31, 0x2e, 0x44, 0x75, 0x74, 0x79, 0x52, 0x04, 0x64, 0x75, 0x74, 0x79, 0x12, 0x26, 0x0a,
+	0x0e, 0x61, 0x67, 0x72, 0x65, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x52, 0x6f, 0x75, 0x6e, 0x64, 0x18,
+	0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0e, 0x61, 0x67, 0x72, 0x65, 0x65, 0x6d, 0x65, 0x6e, 0x74,
+	0x52, 0x6f, 0x75, 0x6e, 0x64, 0x12, 0x14, 0x0a, 0x05, 0x72, 0x6f, 0x75, 0x6e, 0x64, 0x18, 0x05,
+	0x20, 0x01, 0x28, 0x03, 0x52, 0x05, 0x72, 0x6f, 0x75, 0x6e, 0x64, 0x12, 0x1e, 0x0a, 0x0a, 0x65,
+	0x73, 0x74, 0x69, 0x6d, 0x61, 0x74, 0x69, 0x76, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28, 0x05, 0x52,
+	0x0a, 0x65, 0x73, 0x74, 0x69, 0x6d, 0x61, 0x74, 0x69, 0x76, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x76,
+	0x61, 0x6c, 0x75, 0x65, 0x73, 0x18, 0x07, 0x20, 0x03, 0x28, 0x05, 0x52, 0x06, 0x76, 0x61, 0x6c,
+	0x75, 0x65, 0x73, 0x42, 0x2e, 0x5a, 0x2c, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f,
+	0x6d, 0x2f, 0x6f, 0x62, 0x6f, 0x6c, 0x6e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x2f, 0x63, 0x68,
+	0x61, 0x72, 0x6f, 0x6e, 0x2f, 0x63, 0x6f, 0x72, 0x65, 0x2f, 0x63, 0x6f, 0x72, 0x65, 0x70, 0x62,
+	0x2f, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -456,32 +823,40 @@ func file_core_corepb_v1_consensus_proto_rawDescGZIP() []byte {
 	return file_core_corepb_v1_consensus_proto_rawDescData
 }
 
-var file_core_corepb_v1_consensus_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_core_corepb_v1_consensus_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_core_corepb_v1_consensus_proto_goTypes = []interface{}{
 	(*QBFTMsg)(nil),                   // 0: core.corepb.v1.QBFTMsg
 	(*ConsensusMsg)(nil),              // 1: core.corepb.v1.ConsensusMsg
 	(*SniffedConsensusMsg)(nil),       // 2: core.corepb.v1.SniffedConsensusMsg
 	(*SniffedConsensusInstance)(nil),  // 3: core.corepb.v1.SniffedConsensusInstance
 	(*SniffedConsensusInstances)(nil), // 4: core.corepb.v1.SniffedConsensusInstances
-	(*Duty)(nil),                      // 5: core.corepb.v1.Duty
-	(*anypb.Any)(nil),                 // 6: google.protobuf.Any
-	(*timestamppb.Timestamp)(nil),     // 7: google.protobuf.Timestamp
+	(*CommonCoinMsg)(nil),             // 5: core.corepb.v1.CommonCoinMsg
+	(*VCBCMsgContent)(nil),            // 6: core.corepb.v1.VCBCMsgContent
+	(*VCBCMsg)(nil),                   // 7: core.corepb.v1.VCBCMsg
+	(*ABAMsg)(nil),                    // 8: core.corepb.v1.ABAMsg
+	(*Duty)(nil),                      // 9: core.corepb.v1.Duty
+	(*anypb.Any)(nil),                 // 10: google.protobuf.Any
+	(*timestamppb.Timestamp)(nil),     // 11: google.protobuf.Timestamp
 }
 var file_core_corepb_v1_consensus_proto_depIdxs = []int32{
-	5, // 0: core.corepb.v1.QBFTMsg.duty:type_name -> core.corepb.v1.Duty
-	0, // 1: core.corepb.v1.ConsensusMsg.msg:type_name -> core.corepb.v1.QBFTMsg
-	0, // 2: core.corepb.v1.ConsensusMsg.justification:type_name -> core.corepb.v1.QBFTMsg
-	6, // 3: core.corepb.v1.ConsensusMsg.values:type_name -> google.protobuf.Any
-	7, // 4: core.corepb.v1.SniffedConsensusMsg.timestamp:type_name -> google.protobuf.Timestamp
-	1, // 5: core.corepb.v1.SniffedConsensusMsg.msg:type_name -> core.corepb.v1.ConsensusMsg
-	7, // 6: core.corepb.v1.SniffedConsensusInstance.started_at:type_name -> google.protobuf.Timestamp
-	2, // 7: core.corepb.v1.SniffedConsensusInstance.msgs:type_name -> core.corepb.v1.SniffedConsensusMsg
-	3, // 8: core.corepb.v1.SniffedConsensusInstances.instances:type_name -> core.corepb.v1.SniffedConsensusInstance
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	9,  // 0: core.corepb.v1.QBFTMsg.duty:type_name -> core.corepb.v1.Duty
+	0,  // 1: core.corepb.v1.ConsensusMsg.msg:type_name -> core.corepb.v1.QBFTMsg
+	0,  // 2: core.corepb.v1.ConsensusMsg.justification:type_name -> core.corepb.v1.QBFTMsg
+	10, // 3: core.corepb.v1.ConsensusMsg.values:type_name -> google.protobuf.Any
+	11, // 4: core.corepb.v1.SniffedConsensusMsg.timestamp:type_name -> google.protobuf.Timestamp
+	1,  // 5: core.corepb.v1.SniffedConsensusMsg.msg:type_name -> core.corepb.v1.ConsensusMsg
+	11, // 6: core.corepb.v1.SniffedConsensusInstance.started_at:type_name -> google.protobuf.Timestamp
+	2,  // 7: core.corepb.v1.SniffedConsensusInstance.msgs:type_name -> core.corepb.v1.SniffedConsensusMsg
+	3,  // 8: core.corepb.v1.SniffedConsensusInstances.instances:type_name -> core.corepb.v1.SniffedConsensusInstance
+	9,  // 9: core.corepb.v1.CommonCoinMsg.duty:type_name -> core.corepb.v1.Duty
+	9,  // 10: core.corepb.v1.VCBCMsg.duty:type_name -> core.corepb.v1.Duty
+	6,  // 11: core.corepb.v1.VCBCMsg.content:type_name -> core.corepb.v1.VCBCMsgContent
+	9,  // 12: core.corepb.v1.ABAMsg.duty:type_name -> core.corepb.v1.Duty
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_core_corepb_v1_consensus_proto_init() }
@@ -551,6 +926,54 @@ func file_core_corepb_v1_consensus_proto_init() {
 				return nil
 			}
 		}
+		file_core_corepb_v1_consensus_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*CommonCoinMsg); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_core_corepb_v1_consensus_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*VCBCMsgContent); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_core_corepb_v1_consensus_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*VCBCMsg); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_core_corepb_v1_consensus_proto_msgTypes[8].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*ABAMsg); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -558,7 +981,7 @@ func file_core_corepb_v1_consensus_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_core_corepb_v1_consensus_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
