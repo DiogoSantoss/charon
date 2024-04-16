@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package validatorapi
 
@@ -72,4 +72,24 @@ func TestMismatchKeysFunc(t *testing.T) {
 		require.Error(t, err)
 		require.ErrorContains(t, err, "unknown public key")
 	})
+}
+
+func TestWrapResponse(t *testing.T) {
+	resp := wrapResponse(123)
+
+	require.NotNil(t, resp)
+	require.Equal(t, 123, resp.Data)
+	require.Nil(t, resp.Metadata)
+}
+
+func TestWrapResponseWithMetadata(t *testing.T) {
+	metadata := map[string]any{
+		"foo": 123,
+	}
+
+	resp := wrapResponseWithMetadata(123, metadata)
+
+	require.NotNil(t, resp)
+	require.Equal(t, 123, resp.Data)
+	require.Equal(t, metadata, resp.Metadata)
 }

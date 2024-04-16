@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package featureset_test
 
@@ -31,7 +31,7 @@ func TestConfig(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.True(t, featureset.Enabled(featureset.QBFTConsensus))
+	require.True(t, featureset.Enabled(featureset.MockAlpha))
 }
 
 func TestEnableForT(t *testing.T) {
@@ -45,10 +45,4 @@ func TestEnableForT(t *testing.T) {
 
 	featureset.DisableForT(t, testFeature)
 	require.False(t, featureset.Enabled(testFeature))
-}
-
-func TestQBFT(t *testing.T) {
-	setup(t)
-
-	require.True(t, featureset.Enabled(featureset.QBFTConsensus))
 }

@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package relay
 
@@ -22,7 +22,6 @@ import (
 
 	"github.com/obolnetwork/charon/app/errors"
 	"github.com/obolnetwork/charon/app/log"
-	"github.com/obolnetwork/charon/app/promauto"
 	"github.com/obolnetwork/charon/app/version"
 	"github.com/obolnetwork/charon/app/z"
 	"github.com/obolnetwork/charon/eth2util/enr"
@@ -34,13 +33,14 @@ type Config struct {
 	DataDir         string
 	HTTPAddr        string
 	MonitoringAddr  string
+	DebugAddr       string
 	P2PConfig       p2p.Config
 	LogConfig       log.Config
 	AutoP2PKey      bool
 	MaxResPerPeer   int
 	MaxConns        int
 	FilterPrivAddrs bool
-	RelayLogLevel   string // TODO(corver): Rename to LibP2PLogLevel.
+	LibP2PLogLevel  string
 }
 
 // Run starts an Obol libp2p-tcp-relay and udp-discv5 bootnode.
@@ -71,22 +71,15 @@ func Run(ctx context.Context, config Config) error {
 	bwTuples := make(chan bwTuple)
 	counter := newBandwidthCounter(ctx, bwTuples)
 
-	tcpNode, err := startP2P(ctx, config, key, counter)
+	tcpNode, promRegistry, err := startP2P(ctx, config, key, counter)
 	if err != nil {
 		return err
 	}
 
 	go monitorConnections(ctx, tcpNode, bwTuples)
 
-	labels := map[string]string{"relay_peer": p2p.PeerName(tcpNode.ID())}
-	log.SetLokiLabels(labels)
-	promRegistry, err := promauto.NewRegistry(labels)
-	if err != nil {
-		return err
-	}
-
 	// Start serving HTTP: ENR and monitoring.
-	serverErr := make(chan error, 2) // Buffer for 2 servers.
+	serverErr := make(chan error, 3) // Buffer for 3 servers.
 	go func() {
 		if config.HTTPAddr == "" {
 			return
@@ -99,27 +92,37 @@ func Run(ctx context.Context, config Config) error {
 		serverErr <- server.ListenAndServe()
 	}()
 
-	go func() {
-		if config.MonitoringAddr == "" {
-			return
-		}
+	if config.MonitoringAddr != "" {
+		go func() {
+			// Serve prometheus metrics wrapped with relay identifiers.
+			mux := http.NewServeMux()
+			mux.Handle("/metrics", promhttp.InstrumentMetricHandler(
+				promRegistry, promhttp.HandlerFor(promRegistry, promhttp.HandlerOpts{}),
+			))
 
-		// Serve prometheus metrics wrapped with relay identifiers.
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", promhttp.InstrumentMetricHandler(
-			promRegistry, promhttp.HandlerFor(promRegistry, promhttp.HandlerOpts{}),
-		))
+			log.Info(ctx, "Monitoring server started", z.Str("address", config.MonitoringAddr))
+			server := http.Server{Addr: config.MonitoringAddr, Handler: mux, ReadHeaderTimeout: time.Second}
+			serverErr <- server.ListenAndServe()
+		}()
+	}
 
-		// Copied from net/http/pprof/pprof.go
-		mux.HandleFunc("/debug/pprof/", pprof.Index)
-		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	if config.DebugAddr != "" {
+		go func() {
+			debugMux := http.NewServeMux()
 
-		server := http.Server{Addr: config.MonitoringAddr, Handler: mux, ReadHeaderTimeout: time.Second}
-		serverErr <- server.ListenAndServe()
-	}()
+			// Copied from net/http/pprof/pprof.go
+			debugMux.HandleFunc("/debug/pprof/", pprof.Index)
+			debugMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+			debugMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+			debugMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+			debugMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+			log.Info(ctx, "Debug server started", z.Str("address", config.DebugAddr))
+
+			server := http.Server{Addr: config.DebugAddr, Handler: debugMux, ReadHeaderTimeout: time.Second}
+			serverErr <- server.ListenAndServe()
+		}()
+	}
 
 	log.Info(ctx, "Relay started",
 		z.Str("peer_name", p2p.PeerName(tcpNode.ID())),

@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package p2p
 
@@ -194,7 +194,6 @@ func newPingLogger(tcpNode host.Host, p peer.ID) func(context.Context, ping.Resu
 			prevResolvedMsgs = msgs
 		}
 
-		// TODO(corver): Reconsider this logging format
 		opts := []z.Field{z.Str("peer", PeerName(p))}
 		for addr, msg := range msgs {
 			opts = append(opts, z.Str(addr, msg))

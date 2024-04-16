@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package fuzz_test
 
@@ -21,6 +21,7 @@ var (
 	fuzzer    = flag.Bool("fuzzer", false, "Enables docker based fuzz tests")
 	sudoPerms = flag.Bool("sudo-perms", false, "Enables changing all compose artefacts file permissions using sudo.")
 	logDir    = flag.String("log-dir", "", "Specifies the directory to store test docker-compose logs. Empty defaults to stdout.")
+	timeout   = flag.Duration("fuzz-timeout", time.Minute*20, "Timeout after which, if there were no failures, the fuzzing will stop.")
 )
 
 func TestFuzzers(t *testing.T) {
@@ -46,7 +47,7 @@ func TestFuzzers(t *testing.T) {
 
 				return config
 			},
-			timeout: time.Minute * 20,
+			timeout: *timeout,
 		},
 		{
 			name: "p2p_fuzz_tests",
@@ -55,7 +56,7 @@ func TestFuzzers(t *testing.T) {
 
 				return config
 			},
-			timeout: time.Minute * 20,
+			timeout: *timeout,
 		},
 	}
 

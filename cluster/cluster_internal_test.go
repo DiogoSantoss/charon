@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package cluster
 
@@ -249,7 +249,7 @@ func randomDefinition(t *testing.T, cr Creator, op0, op1 Operator, opts ...func(
 	}
 
 	definition, err := NewDefinition("test definition", numVals, threshold,
-		feeRecipientAddrs, withdrawalAddrs, eth2util.Sepolia.GenesisForkVersionHex, cr, []Operator{op0, op1},
+		feeRecipientAddrs, withdrawalAddrs, eth2util.Sepolia.GenesisForkVersionHex, cr, []Operator{op0, op1}, nil,
 		rand.New(rand.NewSource(1)), opts...)
 	require.NoError(t, err)
 
@@ -266,10 +266,19 @@ func TestSupportEIP712Sigs(t *testing.T) {
 }
 
 func RandomDepositData() DepositData {
+	return RandomDepositDataSeed(testutil.NewSeedRand())
+}
+
+func RandomDepositDataSeed(r *rand.Rand) DepositData {
 	return DepositData{
-		PubKey:                testutil.RandomBytes48(),
-		WithdrawalCredentials: testutil.RandomBytes32(),
-		Amount:                rand.Int(),
-		Signature:             testutil.RandomBytes96(),
+		PubKey:                testutil.RandomBytes48Seed(r),
+		WithdrawalCredentials: testutil.RandomBytes32Seed(r),
+		Amount:                r.Int(),
+		Signature:             testutil.RandomBytes96Seed(r),
 	}
+}
+
+func TestSupportPartialDeposits(t *testing.T) {
+	require.True(t, supportPartialDeposits(MinVersionForPartialDeposits))
+	require.False(t, supportPartialDeposits(v1_7))
 }

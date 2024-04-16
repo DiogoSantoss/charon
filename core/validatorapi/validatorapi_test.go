@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package validatorapi_test
 
@@ -13,6 +13,7 @@ import (
 	eth2v1 "github.com/attestantio/go-eth2-client/api/v1"
 	eth2bellatrix "github.com/attestantio/go-eth2-client/api/v1/bellatrix"
 	eth2capella "github.com/attestantio/go-eth2-client/api/v1/capella"
+	eth2deneb "github.com/attestantio/go-eth2-client/api/v1/deneb"
 	eth2spec "github.com/attestantio/go-eth2-client/spec"
 	"github.com/attestantio/go-eth2-client/spec/altair"
 	"github.com/attestantio/go-eth2-client/spec/bellatrix"
@@ -586,27 +587,27 @@ func TestComponent_SubmitProposalInvalidBlock(t *testing.T) {
 		{
 			name:   "no phase 0 block",
 			block:  &eth2api.VersionedSignedProposal{Version: eth2spec.DataVersionPhase0},
-			errMsg: "no phase0 block",
+			errMsg: "data missing",
 		},
 		{
 			name:   "no altair block",
 			block:  &eth2api.VersionedSignedProposal{Version: eth2spec.DataVersionAltair},
-			errMsg: "no altair block",
+			errMsg: "data missing",
 		},
 		{
 			name:   "no bellatrix block",
 			block:  &eth2api.VersionedSignedProposal{Version: eth2spec.DataVersionBellatrix},
-			errMsg: "no bellatrix block",
+			errMsg: "data missing",
 		},
 		{
 			name:   "no capella block",
 			block:  &eth2api.VersionedSignedProposal{Version: eth2spec.DataVersionCapella},
-			errMsg: "no capella block",
+			errMsg: "data missing",
 		},
 		{
 			name:   "no deneb block",
 			block:  &eth2api.VersionedSignedProposal{Version: eth2spec.DataVersionDeneb},
-			errMsg: "no deneb block",
+			errMsg: "data missing",
 		},
 		{
 			name:   "none",
@@ -909,12 +910,12 @@ func TestComponent_SubmitBlindedProposalInvalidBlock(t *testing.T) {
 		{
 			name:   "no bellatrix block",
 			block:  &eth2api.VersionedSignedBlindedProposal{Version: eth2spec.DataVersionBellatrix},
-			errMsg: "no bellatrix block",
+			errMsg: "data missing",
 		},
 		{
 			name:   "no deneb block",
 			block:  &eth2api.VersionedSignedBlindedProposal{Version: eth2spec.DataVersionDeneb},
-			errMsg: "no deneb block",
+			errMsg: "data missing",
 		},
 		{
 			name:   "none",
@@ -942,6 +943,19 @@ func TestComponent_SubmitBlindedProposalInvalidBlock(t *testing.T) {
 				},
 			},
 			errMsg: "no signature found",
+		},
+		{
+			name: "no deneb sig",
+			block: &eth2api.VersionedSignedBlindedProposal{
+				Version: eth2spec.DataVersionDeneb,
+				Deneb: &eth2deneb.SignedBlindedBeaconBlock{
+					Message: &eth2deneb.BlindedBeaconBlock{
+						Slot: eth2p0.Slot(123),
+						Body: testutil.RandomDenebBlindedBeaconBlockBody(),
+					},
+					Signature: eth2p0.BLSSignature{},
+				},
+			},
 		},
 	}
 

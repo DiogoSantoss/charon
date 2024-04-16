@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package core
 
@@ -151,10 +151,13 @@ type SigAgg interface {
 // AggSigDB persists aggregated signed duty data.
 type AggSigDB interface {
 	// Store stores aggregated signed duty data set.
-	Store(context.Context, Duty, SignedDataSet) error
+	Store(context context.Context, duty Duty, data SignedDataSet) error
 
 	// Await blocks and returns the aggregated signed duty data when available.
-	Await(context.Context, Duty, PubKey) (SignedData, error)
+	Await(context context.Context, duty Duty, pubKey PubKey) (SignedData, error)
+
+	// Run runs AggSigDB lifecycle until context is cancelled.
+	Run(context context.Context)
 }
 
 // Broadcaster broadcasts aggregated signed duty data set to the beacon node.

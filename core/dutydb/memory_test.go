@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package dutydb_test
 
@@ -523,7 +523,7 @@ func TestDutyExpiry(t *testing.T) {
 	// Expire attestation
 	deadliner.expire()
 
-	versionedProposal := core.VersionedProposal{VersionedProposal: *testutil.RandomVersionedProposal()}
+	versionedProposal := core.VersionedProposal{VersionedProposal: *testutil.RandomDenebVersionedProposal()}
 
 	// Store another duty which deletes expired duties
 	err = db.Store(ctx, core.NewProposerDuty(slot+1), core.UnsignedDataSet{

@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package p2p
 
@@ -29,6 +29,9 @@ func NewRelays(ctx context.Context, relayAddrs []string, lockHashHex string,
 	var resp []*MutablePeer
 	for _, relayAddr := range relayAddrs {
 		if strings.HasPrefix(relayAddr, "http") {
+			if !strings.HasPrefix(relayAddr, "https") {
+				log.Warn(ctx, "Relay URL does not use https protocol", nil, z.Str("addr", relayAddr))
+			}
 			mutable := new(MutablePeer)
 			go resolveRelay(ctx, relayAddr, lockHashHex, mutable.Set)
 			resp = append(resp, mutable)
@@ -123,7 +126,7 @@ func resolveRelay(ctx context.Context, rawURL, lockHashHex string, callback func
 //
 // It retries until the context is cancelled.
 func queryRelayAddrs(ctx context.Context, relayURL string, backoff func(), lockHashHex string) ([]ma.Multiaddr, error) {
-	parsedURL, err := url.Parse(relayURL)
+	parsedURL, err := url.ParseRequestURI(relayURL)
 	if err != nil {
 		return nil, errors.Wrap(err, "parse relay url")
 	} else if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {

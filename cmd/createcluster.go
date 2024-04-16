@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package cmd
 
@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	eth2api "github.com/attestantio/go-eth2-client/api"
 	eth2v1 "github.com/attestantio/go-eth2-client/api/v1"
@@ -68,6 +69,8 @@ type clusterConfig struct {
 	Network           string
 	NumDVs            int
 
+	DepositAmounts []int // Amounts specified in ETH (integers).
+
 	SplitKeys    bool
 	SplitKeysDir string
 
@@ -75,6 +78,8 @@ type clusterConfig struct {
 
 	PublishAddr string
 	Publish     bool
+
+	testnetConfig eth2util.Network
 }
 
 func newCreateClusterCmd(runFunc func(context.Context, io.Writer, clusterConfig) error) *cobra.Command {
@@ -83,7 +88,7 @@ func newCreateClusterCmd(runFunc func(context.Context, io.Writer, clusterConfig)
 	cmd := &cobra.Command{
 		Use:   "cluster",
 		Short: "Create private keys and configuration files needed to run a distributed validator cluster locally",
-		Long: "Creates a local charon cluster configuration including validator keys, charon p2p keys, cluster-lock.json and a deposit-data.json. " +
+		Long: "Creates a local charon cluster configuration including validator keys, charon p2p keys, cluster-lock.json and deposit-data.json file(s). " +
 			"See flags for supported features.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runFunc(cmd.Context(), cmd.OutOrStdout(), conf)
@@ -112,6 +117,11 @@ func bindClusterFlags(flags *pflag.FlagSet, config *clusterConfig) {
 	flags.StringVar(&config.SplitKeysDir, "split-keys-dir", "", "Directory containing keys to split. Expects keys in keystore-*.json and passwords in keystore-*.txt. Requires --split-existing-keys.")
 	flags.StringVar(&config.PublishAddr, "publish-address", "https://api.obol.tech", "The URL to publish the lock file to.")
 	flags.BoolVar(&config.Publish, "publish", false, "Publish lock file to obol-api.")
+	flags.StringVar(&config.testnetConfig.Name, "testnet-name", "", "Name of the custom test network.")
+	flags.StringVar(&config.testnetConfig.GenesisForkVersionHex, "testnet-fork-version", "", "Genesis fork version of the custom test network (in hex).")
+	flags.Uint64Var(&config.testnetConfig.ChainID, "testnet-chain-id", 0, "Chain ID of the custom test network.")
+	flags.Int64Var(&config.testnetConfig.GenesisTimestamp, "testnet-genesis-timestamp", 0, "Genesis timestamp of the custom test network.")
+	flags.IntSliceVar(&config.DepositAmounts, "deposit-amounts", nil, "List of partial deposit amounts (integers) in ETH. Values must sum up to exactly 32ETH.")
 }
 
 func bindInsecureFlags(flags *pflag.FlagSet, insecureKeys *bool) {
@@ -121,13 +131,23 @@ func bindInsecureFlags(flags *pflag.FlagSet, insecureKeys *bool) {
 func runCreateCluster(ctx context.Context, w io.Writer, conf clusterConfig) error {
 	var err error
 
-	if err = validateCreateConfig(conf); err != nil {
-		return err
-	}
-
 	// Map prater to goerli to ensure backwards compatibility with older cluster definitions and cluster locks.
 	if conf.Network == eth2util.Prater {
 		conf.Network = eth2util.Goerli.Name
+	}
+
+	var def cluster.Definition
+	if conf.DefFile != "" { // Load definition from DefFile
+		def, err = loadDefinition(ctx, conf.DefFile)
+		if err != nil {
+			return err
+		}
+
+		conf.NumNodes = len(def.Operators)
+	}
+
+	if err = validateCreateConfig(ctx, conf); err != nil {
+		return err
 	}
 
 	var secrets []tbls.PrivateKey
@@ -146,18 +166,34 @@ func runCreateCluster(ctx context.Context, w io.Writer, conf clusterConfig) erro
 		conf.NumDVs = len(secrets)
 	}
 
+	var depositAmounts []eth2p0.Gwei
+
 	// Get a cluster definition, either from a definition file or from the config.
-	var def cluster.Definition
-	if conf.DefFile != "" { // Load definition from DefFile
-		def, err = loadDefinition(ctx, conf.DefFile)
+	if conf.DefFile != "" {
+		// Validate the provided definition.
+		err = validateDef(ctx, conf.InsecureKeys, conf.KeymanagerAddrs, def)
 		if err != nil {
 			return err
 		}
+
+		network, err := eth2util.ForkVersionToNetwork(def.ForkVersion)
+		if err != nil {
+			return err
+		}
+		conf.Network = network
+		depositAmounts = def.DepositAmounts
 	} else { // Create new definition from cluster config
 		def, err = newDefFromConfig(ctx, conf)
 		if err != nil {
 			return err
 		}
+
+		depositAmounts = deposit.EthsToGweis(conf.DepositAmounts)
+	}
+
+	if len(depositAmounts) == 0 {
+		// If partial deposit amounts were not specified, default to single amount of 32ETH.
+		depositAmounts = []eth2p0.Gwei{deposit.MaxDepositAmount}
 	}
 
 	if len(secrets) == 0 {
@@ -173,12 +209,6 @@ func runCreateCluster(ctx context.Context, w io.Writer, conf clusterConfig) erro
 	}
 
 	numNodes := len(def.Operators)
-
-	// Validate definition
-	err = validateDef(ctx, conf.InsecureKeys, conf.KeymanagerAddrs, def)
-	if err != nil {
-		return err
-	}
 
 	// Generate threshold bls key shares
 	pubkeys, shareSets, err := getTSSShares(secrets, def.Threshold, numNodes)
@@ -214,17 +244,17 @@ func runCreateCluster(ctx context.Context, w io.Writer, conf clusterConfig) erro
 		return err
 	}
 
-	depositDatas, err := createDepositDatas(def.WithdrawalAddresses(), network, secrets)
+	depositDatas, err := createDepositDatas(def.WithdrawalAddresses(), network, secrets, depositAmounts)
 	if err != nil {
 		return err
 	}
 
-	// Write deposit-data file
-	if err = writeDepositData(depositDatas, network, conf.ClusterDir, numNodes); err != nil {
+	// Write deposit-data files
+	if err = deposit.WriteClusterDepositDataFiles(depositDatas, network, conf.ClusterDir, numNodes); err != nil {
 		return err
 	}
 
-	valRegs, err := createValidatorRegistrations(def.FeeRecipientAddresses(), secrets, def.ForkVersion)
+	valRegs, err := createValidatorRegistrations(def.FeeRecipientAddresses(), secrets, def.ForkVersion, conf.SplitKeys)
 	if err != nil {
 		return err
 	}
@@ -289,15 +319,15 @@ func runCreateCluster(ctx context.Context, w io.Writer, conf clusterConfig) erro
 }
 
 // validateCreateConfig returns an error if any of the provided config parameters are invalid.
-func validateCreateConfig(conf clusterConfig) error {
+func validateCreateConfig(ctx context.Context, conf clusterConfig) error {
 	if conf.NumNodes == 0 && conf.DefFile == "" { // if there's a definition file, infer this value from it later
 		return errors.New("missing --nodes flag")
 	}
 
-	if len(strings.TrimSpace(conf.Network)) == 0 {
-		return errors.New("missing --network flag")
+	// Check for valid network configuration.
+	if err := validateNetworkConfig(conf); err != nil {
+		return errors.Wrap(err, "get network config")
 	}
-
 	if err := detectNodeDirs(conf.ClusterDir, conf.NumNodes); err != nil {
 		return err
 	}
@@ -305,6 +335,25 @@ func validateCreateConfig(conf clusterConfig) error {
 	// Ensure sufficient auth tokens are provided for the keymanager addresses
 	if len(conf.KeymanagerAddrs) != len(conf.KeymanagerAuthTokens) {
 		return errors.New("number of --keymanager-addresses do not match --keymanager-auth-tokens. Please fix configuration flags")
+	}
+
+	if len(conf.DepositAmounts) > 0 {
+		amounts := deposit.EthsToGweis(conf.DepositAmounts)
+
+		if err := deposit.VerifyDepositAmounts(amounts); err != nil {
+			return err
+		}
+	}
+
+	for _, addr := range conf.KeymanagerAddrs {
+		keymanagerURL, err := url.ParseRequestURI(addr)
+		if err != nil {
+			return errors.Wrap(err, "failed to parse keymanager addr", z.Str("addr", addr))
+		}
+
+		if keymanagerURL.Scheme != "https" {
+			log.Warn(ctx, "Keymanager URL does not use https protocol", nil, z.Str("addr", addr))
+		}
 	}
 
 	if conf.SplitKeys {
@@ -336,52 +385,60 @@ func detectNodeDirs(clusterDir string, nodeAmount int) error {
 	return nil
 }
 
-// signDepositDatas returns Distributed Validator pubkeys and deposit data signatures corresponding to each pubkey.
-func signDepositDatas(secrets []tbls.PrivateKey, withdrawalAddresses []string, network string) ([]eth2p0.DepositData, error) {
+// signDepositDatas returns a list of DepositData for each partial deposit amount.
+func signDepositDatas(secrets []tbls.PrivateKey, withdrawalAddresses []string, network string, depositAmounts []eth2p0.Gwei) ([][]eth2p0.DepositData, error) {
 	if len(secrets) != len(withdrawalAddresses) {
 		return nil, errors.New("insufficient withdrawal addresses")
 	}
-
-	var datas []eth2p0.DepositData
-	for i, secret := range secrets {
-		withdrawalAddr, err := eth2util.ChecksumAddress(withdrawalAddresses[i])
-		if err != nil {
-			return nil, err
-		}
-
-		pk, err := tbls.SecretToPublicKey(secret)
-		if err != nil {
-			return nil, errors.Wrap(err, "secret to pubkey")
-		}
-
-		msg, err := deposit.NewMessage(eth2p0.BLSPubKey(pk), withdrawalAddr)
-		if err != nil {
-			return nil, err
-		}
-
-		sigRoot, err := deposit.GetMessageSigningRoot(msg, network)
-		if err != nil {
-			return nil, err
-		}
-
-		sig, err := tbls.Sign(secret, sigRoot[:])
-		if err != nil {
-			return nil, err
-		}
-
-		datas = append(datas, eth2p0.DepositData{
-			PublicKey:             msg.PublicKey,
-			WithdrawalCredentials: msg.WithdrawalCredentials,
-			Amount:                msg.Amount,
-			Signature:             tblsconv.SigToETH2(sig),
-		})
+	if len(depositAmounts) == 0 {
+		return nil, errors.New("empty deposit amounts")
 	}
 
-	return datas, nil
+	var dd [][]eth2p0.DepositData
+	for _, depositAmount := range depositAmounts {
+		var datas []eth2p0.DepositData
+		for i, secret := range secrets {
+			withdrawalAddr, err := eth2util.ChecksumAddress(withdrawalAddresses[i])
+			if err != nil {
+				return nil, err
+			}
+
+			pk, err := tbls.SecretToPublicKey(secret)
+			if err != nil {
+				return nil, errors.Wrap(err, "secret to pubkey")
+			}
+
+			msg, err := deposit.NewMessage(eth2p0.BLSPubKey(pk), withdrawalAddr, depositAmount)
+			if err != nil {
+				return nil, err
+			}
+
+			sigRoot, err := deposit.GetMessageSigningRoot(msg, network)
+			if err != nil {
+				return nil, err
+			}
+
+			sig, err := tbls.Sign(secret, sigRoot[:])
+			if err != nil {
+				return nil, err
+			}
+
+			datas = append(datas, eth2p0.DepositData{
+				PublicKey:             msg.PublicKey,
+				WithdrawalCredentials: msg.WithdrawalCredentials,
+				Amount:                msg.Amount,
+				Signature:             tblsconv.SigToETH2(sig),
+			})
+		}
+
+		dd = append(dd, datas)
+	}
+
+	return dd, nil
 }
 
 // signValidatorRegistrations returns a slice of validator registrations for each private key in secrets.
-func signValidatorRegistrations(secrets []tbls.PrivateKey, feeAddresses []string, forkVersion []byte) ([]core.VersionedSignedValidatorRegistration, error) {
+func signValidatorRegistrations(secrets []tbls.PrivateKey, feeAddresses []string, forkVersion []byte, useCurrentTimestamp bool) ([]core.VersionedSignedValidatorRegistration, error) {
 	if len(secrets) != len(feeAddresses) {
 		return nil, errors.New("insufficient fee addresses")
 	}
@@ -398,9 +455,15 @@ func signValidatorRegistrations(secrets []tbls.PrivateKey, feeAddresses []string
 			return nil, errors.Wrap(err, "secret to pubkey")
 		}
 
-		timestamp, err := eth2util.ForkVersionToGenesisTime(forkVersion)
-		if err != nil {
-			return nil, err
+		var timestamp time.Time
+		if useCurrentTimestamp {
+			// Used in --split-existing-keys mode
+			timestamp = time.Now().UTC()
+		} else {
+			timestamp, err = eth2util.ForkVersionToGenesisTime(forkVersion)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		unsignedReg, err := registration.NewMessage(
@@ -514,40 +577,25 @@ func generateKeys(numDVs int) ([]tbls.PrivateKey, error) {
 }
 
 // createDepositDatas creates a slice of deposit datas using the provided parameters and returns it.
-func createDepositDatas(withdrawalAddresses []string, network string, secrets []tbls.PrivateKey) ([]eth2p0.DepositData, error) {
+func createDepositDatas(withdrawalAddresses []string, network string, secrets []tbls.PrivateKey, depositAmounts []eth2p0.Gwei) ([][]eth2p0.DepositData, error) {
 	if len(secrets) != len(withdrawalAddresses) {
 		return nil, errors.New("insufficient withdrawal addresses")
 	}
-
-	return signDepositDatas(secrets, withdrawalAddresses, network)
-}
-
-// writeDepositData writes deposit data to disk for the DVs for all peers in a cluster.
-func writeDepositData(depositDatas []eth2p0.DepositData, network string, clusterDir string, numNodes int) error {
-	// Serialize the deposit data into bytes
-	bytes, err := deposit.MarshalDepositData(depositDatas, network)
-	if err != nil {
-		return err
+	if len(depositAmounts) == 0 {
+		return nil, errors.New("empty deposit amounts")
 	}
+	depositAmounts = deposit.DedupAmounts(depositAmounts)
 
-	for i := 0; i < numNodes; i++ {
-		depositPath := path.Join(nodeDir(clusterDir, i), "deposit-data.json")
-		err = os.WriteFile(depositPath, bytes, 0o400) // read-only
-		if err != nil {
-			return errors.Wrap(err, "write deposit data")
-		}
-	}
-
-	return nil
+	return signDepositDatas(secrets, withdrawalAddresses, network, depositAmounts)
 }
 
 // createValidatorRegistrations creates a slice of builder validator registrations using the provided parameters and returns it.
-func createValidatorRegistrations(feeAddresses []string, secrets []tbls.PrivateKey, forkVersion []byte) ([]core.VersionedSignedValidatorRegistration, error) {
+func createValidatorRegistrations(feeAddresses []string, secrets []tbls.PrivateKey, forkVersion []byte, useCurrentTimestamp bool) ([]core.VersionedSignedValidatorRegistration, error) {
 	if len(feeAddresses) != len(secrets) {
 		return nil, errors.New("insufficient fee addresses")
 	}
 
-	return signValidatorRegistrations(secrets, feeAddresses, forkVersion)
+	return signValidatorRegistrations(secrets, feeAddresses, forkVersion, useCurrentTimestamp)
 }
 
 // writeLock creates a cluster lock and writes it to disk for all peers.
@@ -573,9 +621,18 @@ func writeLock(lock cluster.Lock, clusterDir string, numNodes int) error {
 func getValidators(
 	dvsPubkeys []tbls.PublicKey,
 	dvPrivShares [][]tbls.PrivateKey,
-	depositDatas []eth2p0.DepositData,
+	depositDatas [][]eth2p0.DepositData,
 	valRegs []core.VersionedSignedValidatorRegistration,
 ) ([]cluster.DistValidator, error) {
+	depositDatasMap := make(map[tbls.PublicKey][]eth2p0.DepositData, len(dvsPubkeys))
+	for amountIndex := range depositDatas {
+		for ddIndex := range depositDatas[amountIndex] {
+			dd := depositDatas[amountIndex][ddIndex]
+			pk := tbls.PublicKey(dd.PublicKey)
+			depositDatasMap[pk] = append(depositDatasMap[pk], dd)
+		}
+	}
+
 	var vals []cluster.DistValidator
 	for idx, dv := range dvsPubkeys {
 		dv := dv
@@ -588,19 +645,6 @@ func getValidators(
 			}
 
 			pubshares = append(pubshares, pubk[:])
-		}
-
-		depositIdx := -1
-		for i, dd := range depositDatas {
-			if [48]byte(dd.PublicKey) != dv {
-				continue
-			}
-			depositIdx = i
-
-			break
-		}
-		if depositIdx == -1 {
-			return nil, errors.New("deposit data not found")
 		}
 
 		regIdx := -1
@@ -628,15 +672,27 @@ func getValidators(
 			return nil, errors.Wrap(err, "builder registration to cluster object")
 		}
 
+		var partialDepositData []cluster.DepositData
+
+		depositDatasList, ok := depositDatasMap[dv]
+		if !ok {
+			return nil, errors.New("deposit data not found for dv", z.Str("dv", hex.EncodeToString(dv[:])))
+		}
+
+		for _, dd := range depositDatasList {
+			dd := dd
+			partialDepositData = append(partialDepositData, cluster.DepositData{
+				PubKey:                dd.PublicKey[:],
+				WithdrawalCredentials: dd.WithdrawalCredentials,
+				Amount:                int(dd.Amount),
+				Signature:             dd.Signature[:],
+			})
+		}
+
 		vals = append(vals, cluster.DistValidator{
-			PubKey:    dv[:],
-			PubShares: pubshares,
-			DepositData: cluster.DepositData{
-				PubKey:                depositDatas[depositIdx].PublicKey[:],
-				WithdrawalCredentials: depositDatas[depositIdx].WithdrawalCredentials,
-				Amount:                int(depositDatas[depositIdx].Amount),
-				Signature:             depositDatas[depositIdx].Signature[:],
-			},
+			PubKey:              dv[:],
+			PubShares:           pubshares,
+			PartialDepositData:  partialDepositData,
 			BuilderRegistration: clusterReg,
 		})
 	}
@@ -702,9 +758,9 @@ func writeKeysToDisk(numNodes int, clusterDir string, insecureKeys bool, shareSe
 			secrets = append(secrets, shares[i])
 		}
 
-		keysDir := path.Join(nodeDir(clusterDir, i), "/validator_keys")
-		if err := os.MkdirAll(keysDir, 0o755); err != nil {
-			return errors.Wrap(err, "mkdir validator_keys")
+		keysDir, err := cluster.CreateValidatorKeysDir(nodeDir(clusterDir, i))
+		if err != nil {
+			return err
 		}
 
 		if insecureKeys {
@@ -747,9 +803,16 @@ func newDefFromConfig(ctx context.Context, conf clusterConfig) (cluster.Definiti
 		return cluster.Definition{}, err
 	}
 
-	forkVersion, err := eth2util.NetworkToForkVersion(conf.Network)
-	if err != nil {
-		return cluster.Definition{}, err
+	var forkVersion string
+	if conf.Network != "" {
+		forkVersion, err = eth2util.NetworkToForkVersion(conf.Network)
+		if err != nil {
+			return cluster.Definition{}, err
+		}
+	} else if conf.testnetConfig.GenesisForkVersionHex != "" {
+		forkVersion = conf.testnetConfig.GenesisForkVersionHex
+	} else {
+		return cluster.Definition{}, errors.New("network not specified, missing --network or --testnet-fork-version")
 	}
 
 	var ops []cluster.Operator
@@ -758,8 +821,12 @@ func newDefFromConfig(ctx context.Context, conf clusterConfig) (cluster.Definiti
 	}
 	threshold := safeThreshold(ctx, conf.NumNodes, conf.Threshold)
 
+	var opts []func(*cluster.Definition)
+	if len(conf.DepositAmounts) > 0 {
+		opts = append(opts, cluster.WithVersion(cluster.MinVersionForPartialDeposits))
+	}
 	def, err := cluster.NewDefinition(conf.Name, conf.NumDVs, threshold, feeRecipientAddrs,
-		withdrawalAddrs, forkVersion, cluster.Creator{}, ops, rand.Reader)
+		withdrawalAddrs, forkVersion, cluster.Creator{}, ops, conf.DepositAmounts, rand.Reader, opts...)
 	if err != nil {
 		return cluster.Definition{}, err
 	}
@@ -799,7 +866,7 @@ func writeOutput(out io.Writer, splitKeys bool, clusterDir string, numNodes int,
 	_, _ = sb.WriteString(fmt.Sprintf("├─ node[0-%d]/\t\t\tDirectory for each node\n", numNodes-1))
 	_, _ = sb.WriteString("│  ├─ charon-enr-private-key\tCharon networking private key for node authentication\n")
 	_, _ = sb.WriteString("│  ├─ cluster-lock.json\t\tCluster lock defines the cluster lock file which is signed by all nodes\n")
-	_, _ = sb.WriteString("│  ├─ deposit-data.json\t\tDeposit data file is used to activate a Distributed Validator on DV Launchpad\n")
+	_, _ = sb.WriteString("│  ├─ deposit-data-*.json\tDeposit data files are used to activate a Distributed Validator on the DV Launchpad\n")
 	if keysToDisk {
 		_, _ = sb.WriteString("│  ├─ validator_keys\t\tValidator keystores and password\n")
 		_, _ = sb.WriteString("│  │  ├─ keystore-*.json\tValidator private share key for duty signing\n")
@@ -828,6 +895,12 @@ func validateDef(ctx context.Context, insecureKeys bool, keymanagerAddrs []strin
 
 	if len(keymanagerAddrs) > 0 && (len(keymanagerAddrs) != len(def.Operators)) {
 		return errors.New("insufficient no of keymanager addresses", z.Int("expected", len(def.Operators)), z.Int("got", len(keymanagerAddrs)))
+	}
+
+	if len(def.DepositAmounts) > 0 {
+		if err := deposit.VerifyDepositAmounts(def.DepositAmounts); err != nil {
+			return errors.Wrap(err, "deposit amounts verification failed")
+		}
 	}
 
 	network, err := eth2util.ForkVersionToNetwork(def.ForkVersion)
@@ -926,7 +999,7 @@ func loadDefinition(ctx context.Context, defFile string) (cluster.Definition, er
 
 // validURI returns true if the input string is a valid HTTP/HTTPS URI.
 func validURI(str string) bool {
-	u, err := url.Parse(str)
+	u, err := url.ParseRequestURI(str)
 
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
@@ -1029,4 +1102,25 @@ func builderRegistrationFromETH2(reg core.VersionedSignedValidatorRegistration) 
 		},
 		Signature: reg.Signature(),
 	}, nil
+}
+
+// validateNetworkConfig returns an error if the network configuration is invalid in the given cluster configuration.
+func validateNetworkConfig(conf clusterConfig) error {
+	if conf.Network != "" {
+		if eth2util.ValidNetwork(conf.Network) {
+			return nil
+		}
+
+		return errors.New("invalid network specified", z.Str("network", conf.Network))
+	}
+
+	// Check if custom testnet configuration is provided.
+	if conf.testnetConfig.IsNonZero() {
+		// Add testnet config to supported networks.
+		eth2util.AddTestNetwork(conf.testnetConfig)
+
+		return nil
+	}
+
+	return errors.New("missing --network flag or testnet config flags")
 }

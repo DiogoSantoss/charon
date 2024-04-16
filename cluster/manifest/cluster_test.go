@@ -1,8 +1,9 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package manifest_test
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,7 +14,9 @@ import (
 )
 
 func TestDuplicateENRs(t *testing.T) {
-	lock, _, _ := cluster.NewForT(t, 1, 3, 4, 0)
+	seed := 0
+	random := rand.New(rand.NewSource(int64(seed)))
+	lock, _, _ := cluster.NewForT(t, 1, 3, 4, seed, random)
 
 	_, err := manifest.ClusterPeers(&manifestpb.Cluster{Operators: []*manifestpb.Operator{
 		{Enr: lock.Operators[0].ENR},

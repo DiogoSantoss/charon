@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package peerinfo
 
@@ -22,7 +22,7 @@ func DoOnce(ctx context.Context, tcpNode host.Host, peerID peer.ID) (*pbv1.PeerI
 		rtt = d
 	}
 
-	req := new(pbv1.PeerInfo) //  TODO(corver): Populate request fields and make them required.
+	req := new(pbv1.PeerInfo)
 	resp := new(pbv1.PeerInfo)
 	err := p2p.SendReceive(ctx, tcpNode, peerID, req, resp, protocolID2,
 		p2p.WithSendReceiveRTT(rttCallback))

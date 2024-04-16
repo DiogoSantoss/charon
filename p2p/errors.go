@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package p2p
 
@@ -32,11 +32,6 @@ func hasErrDialBackoff(err error) bool {
 func dialErrMsgs(err error) (map[string]string, bool) {
 	dErr := new(swarm.DialError)
 	if !errors.As(err, &dErr) {
-		return nil, false
-	}
-
-	// We do not expect cause to be populated.
-	if dErr.Cause != nil {
 		return nil, false
 	}
 

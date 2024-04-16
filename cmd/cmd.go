@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 // Package cmd implements Charon's command-line interface.
 package cmd
@@ -45,8 +45,19 @@ func New() *cobra.Command {
 		),
 		newCombineCmd(newCombineFunc),
 		newAlphaCmd(
+			newTestCmd(
+				newTestPeersCmd(runTestPeers),
+				newTestBeaconCmd(runTestBeacon),
+				newTestValidatorCmd(runTestValidator),
+			),
 			newAddValidatorsCmd(runAddValidatorsSolo),
 			newViewClusterManifestCmd(runViewClusterManifest),
+		),
+		newExitCmd(
+			newListActiveValidatorsCmd(runListActiveValidatorsCmd),
+			newSubmitPartialExitCmd(runSignPartialExit),
+			newBcastFullExitCmd(runBcastFullExit),
+			newFetchExitCmd(runFetchExit),
 		),
 		newUnsafeCmd(newRunCmd(app.Run, true)),
 	)
@@ -162,6 +173,13 @@ func printFlags(ctx context.Context, flags *pflag.FlagSet) {
 	log.Info(ctx, "Parsed config", flagsToLogFields(flags)...)
 }
 
+// printLicense INFO logs the license notice.
+func printLicense(ctx context.Context) {
+	log.Info(ctx, "This software is licensed under the Maria DB Business Source License 1.1; "+
+		"you may not use this software except in compliance with this license. "+
+		"You may obtain a copy of this license at https://github.com/ObolNetwork/charon/blob/main/LICENSE")
+}
+
 // flagsToLogFields converts the given flags to log fields.
 func flagsToLogFields(flags *pflag.FlagSet) []z.Field {
 	var fields []z.Field
@@ -193,7 +211,7 @@ func redact(flag, val string) string {
 		return val
 	}
 
-	u, err := url.Parse(val)
+	u, err := url.ParseRequestURI(val)
 	if err != nil {
 		return val
 	}

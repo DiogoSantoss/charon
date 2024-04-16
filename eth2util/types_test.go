@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package eth2util_test
 
@@ -46,12 +46,6 @@ func TestUnmarshallingSignedEpoch(t *testing.T) {
 	})
 	testutil.RequireNoError(t, err)
 	require.Equal(t, string(b), string(b2))
-
-	type legacySig [96]byte
-	sigB, err := json.Marshal(legacySig(sig))
-	require.NoError(t, err)
-	oldTmpl := `{"epoch": %d,"signature": %s}`
-	b = []byte(fmt.Sprintf(oldTmpl, epoch, sigB))
 
 	var e2 eth2util.SignedEpoch
 	err = e2.UnmarshalJSON(b)

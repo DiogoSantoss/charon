@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package eth2wrap
 
@@ -78,6 +78,15 @@ func (l *lazy) getOrCreateClient(ctx context.Context) (Client, error) {
 	l.setClient(cl)
 
 	return cl, err
+}
+
+func (l *lazy) SetForkVersion(forkVersion [4]byte) {
+	cl, ok := l.getClient()
+	if !ok {
+		return
+	}
+
+	cl.SetForkVersion(forkVersion)
 }
 
 func (l *lazy) Name() string {

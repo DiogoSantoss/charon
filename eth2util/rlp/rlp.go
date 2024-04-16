@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 // Package rlp implements the simple byte slice and lists of byte slices encoding/decoding using
 // recursive length prefix encoding scheme as per spec
@@ -101,10 +101,9 @@ func decodeLength(item []byte) (offset int, length int, err error) {
 	}
 
 	if prefix < 0xc0 {
-		length = int(prefix - 0xb7)    // length of the string in bytes in binary form
-		if length > 8 || length <= 0 { // This is impossible based on outer if else checks
-			panic("length not in expected range [1,8]")
-		}
+		// Due to above checks, prefix will be >= 0xb8 and < 0xc0,
+		// therefore the length must be in [1,8]
+		length = int(prefix - 0xb7) // length of the string in bytes in binary form
 
 		offset := 1 + length
 
@@ -124,10 +123,9 @@ func decodeLength(item []byte) (offset int, length int, err error) {
 		return 1, int(prefix - 0xc0), nil
 	}
 
+	// Due to above checks, prefix will be >= 0xf8 and <= 0xff
+	// therefore the length must be in [1,8]
 	length = int(prefix - 0xf7)
-	if length > 8 || length <= 0 { // This is impossible based on outer if else checks
-		panic("length not in expected range [1,8]")
-	}
 
 	offset = 1 + length
 

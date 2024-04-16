@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package featureset
 
@@ -11,7 +11,9 @@ import (
 func TestAllFeatureStatus(t *testing.T) {
 	// Add all features to this test
 	features := []Feature{
-		QBFTConsensus,
+		MockAlpha,
+		EagerDoubleLinear,
+		ConsensusParticipate,
 	}
 
 	for _, feature := range features {

@@ -1,10 +1,11 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package integration_test
 
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -25,7 +26,6 @@ import (
 	"github.com/obolnetwork/charon/app/z"
 	"github.com/obolnetwork/charon/cluster"
 	"github.com/obolnetwork/charon/core"
-	"github.com/obolnetwork/charon/core/leadercast"
 	"github.com/obolnetwork/charon/core/parsigex"
 	"github.com/obolnetwork/charon/eth2util/keystore"
 	"github.com/obolnetwork/charon/p2p"
@@ -92,7 +92,7 @@ func TestSimnetDuties(t *testing.T) {
 		{
 			name:          "builder proposer with teku",
 			scheduledType: core.DutyProposer,
-			duties:        []core.DutyType{core.DutyBuilderProposer, core.DutyRandao},
+			duties:        []core.DutyType{core.DutyBuilderProposer, core.DutyRandao, core.DutyBuilderRegistration},
 			builderAPI:    true,
 			vcType:        vcTeku,
 		},
@@ -171,10 +171,6 @@ func TestSimnetDuties(t *testing.T) {
 				args.BMockOpts = append(args.BMockOpts, beaconmock.WithDeterministicSyncCommDuties(2, 2))
 			}
 
-			if !test.pregenRegistration {
-				featureset.DisableForT(t, featureset.PreGenRegistrations)
-			}
-
 			expect := newSimnetExpect(args.N, test.duties...)
 			testSimnet(t, args, expect)
 		})
@@ -204,7 +200,9 @@ func newSimnetArgs(t *testing.T) simnetArgs {
 		n      = 3
 		numDVs = 1
 	)
-	lock, p2pKeys, secretShares := cluster.NewForT(t, numDVs, n, n, 99)
+	seed := 99
+	random := rand.New(rand.NewSource(int64(seed)))
+	lock, p2pKeys, secretShares := cluster.NewForT(t, numDVs, n, n, seed, random)
 
 	secrets := secretShares[0]
 
@@ -291,11 +289,9 @@ func testSimnet(t *testing.T, args simnetArgs, expect *simnetExpect) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 
+	relayAddr := startRelay(ctx, t)
+	// NOTE: We can add support for in-memory transport to QBFT.
 	parSigExFunc := parsigex.NewMemExFunc(args.N)
-	lcastTransportFunc := leadercast.NewMemTransportFunc(ctx)
-	featureConf := featureset.DefaultConfig()
-	featureConf.Disabled = []string{string(featureset.QBFTConsensus)} // TODO(corver): Add support for in-memory transport to QBFT.
-
 	type simResult struct {
 		PeerIdx int
 		Duty    core.Duty
@@ -311,18 +307,19 @@ func testSimnet(t *testing.T, args simnetArgs, expect *simnetExpect) {
 		peerIdx := i
 		conf := app.Config{
 			Log:              log.DefaultConfig(),
-			Feature:          featureConf,
+			Feature:          featureset.DefaultConfig(),
 			SimnetBMock:      true,
 			SimnetVMock:      args.VMocks,
 			MonitoringAddr:   testutil.AvailableAddr(t).String(), // Random monitoring address
 			ValidatorAPIAddr: args.VAPIAddrs[i],
 			TestConfig: app.TestConfig{
-				Lock:               &args.Lock,
-				P2PKey:             args.P2PKeys[i],
-				TestPingConfig:     p2p.TestPingConfig{Disable: true},
-				SimnetKeys:         []tbls.PrivateKey{args.SimnetKeys[i]},
-				LcastTransportFunc: lcastTransportFunc,
-				ParSigExFunc:       parSigExFunc,
+				Lock:   &args.Lock,
+				P2PKey: args.P2PKeys[i],
+				TestPingConfig: p2p.TestPingConfig{
+					MaxBackoff: time.Second,
+				},
+				SimnetKeys:   []tbls.PrivateKey{args.SimnetKeys[i]},
+				ParSigExFunc: parSigExFunc,
 				BroadcastCallback: func(_ context.Context, duty core.Duty, set core.SignedDataSet) error {
 					for key, data := range set {
 						select {
@@ -338,7 +335,10 @@ func testSimnet(t *testing.T, args simnetArgs, expect *simnetExpect) {
 					beaconmock.WithSlotsPerEpoch(1),
 				}, args.BMockOpts...),
 			},
-			P2P:                     p2p.Config{},
+			P2P: p2p.Config{
+				TCPAddrs: []string{testutil.AvailableAddr(t).String()},
+				Relays:   []string{relayAddr},
+			},
 			BuilderAPI:              args.BuilderAPI,
 			SyntheticBlockProposals: args.SyntheticProposals,
 		}
@@ -473,7 +473,7 @@ func startTeku(t *testing.T, args simnetArgs, node int) simnetArgs {
 		fmt.Sprintf("--name=%s", name),
 		fmt.Sprintf("--volume=%s:/keys", tempDir),
 		"--user=root", // Root required to read volume files in GitHub actions.
-		"consensys/teku:23.9.0",
+		"consensys/teku:23.11.0",
 	}
 	dockerArgs = append(dockerArgs, tekuArgs...)
 	t.Logf("docker args: %v", dockerArgs)

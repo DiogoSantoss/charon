@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package dkg
 
@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"time"
 
 	eth2api "github.com/attestantio/go-eth2-client/api"
@@ -108,11 +109,11 @@ func Run(ctx context.Context, conf Config) (err error) {
 	}
 
 	// This DKG only supports a few specific config versions.
-	if def.Version != "v1.6.0" && def.Version != "v1.7.0" {
-		return errors.New("only v1.6.0 and v1.7.0 cluster definition version supported")
+	if def.Version != "v1.6.0" && def.Version != "v1.7.0" && def.Version != "v1.8.0" {
+		return errors.New("only v1.6.0, v1.7.0 and v1.8.0 cluster definition versions supported")
 	}
 
-	if err := validateKeymanagerFlags(conf.KeymanagerAddr, conf.KeymanagerAuthToken); err != nil {
+	if err := validateKeymanagerFlags(ctx, conf.KeymanagerAddr, conf.KeymanagerAuthToken); err != nil {
 		return err
 	}
 
@@ -203,7 +204,10 @@ func Run(ctx context.Context, conf Config) (err error) {
 	caster := bcast.New(tcpNode, peerIds, key)
 
 	// register bcast callbacks for frostp2p
-	tp := newFrostP2P(tcpNode, peerMap, caster, def.Threshold, def.NumValidators)
+	tp, err := newFrostP2P(tcpNode, peerMap, caster, def.Threshold, def.NumValidators)
+	if err != nil {
+		return errors.Wrap(err, "frost error")
+	}
 
 	// register bcast callbacks for lock hash k1 signature handler
 	nodeSigCaster := newNodeSigBcast(peers, nodeIdx, caster)
@@ -238,7 +242,13 @@ func Run(ctx context.Context, conf Config) (err error) {
 	}
 
 	// Sign, exchange and aggregate Deposit Data
-	depositDatas, err := signAndAggDepositData(ctx, ex, shares, def.WithdrawalAddresses(), network, nodeIdx)
+	depositAmounts := def.DepositAmounts
+	if len(depositAmounts) == 0 {
+		depositAmounts = []eth2p0.Gwei{deposit.MaxDepositAmount}
+	} else {
+		depositAmounts = deposit.DedupAmounts(depositAmounts)
+	}
+	depositDatas, err := signAndAggDepositData(ctx, ex, shares, def.WithdrawalAddresses(), network, nodeIdx, depositAmounts)
 	if err != nil {
 		return err
 	}
@@ -334,10 +344,13 @@ func Run(ctx context.Context, conf Config) (err error) {
 	}
 	log.Debug(ctx, "Saved lock file to disk")
 
-	if err := writeDepositData(depositDatas, network, conf.DataDir); err != nil {
-		return err
+	// The loop across partial amounts (shall be unique)
+	for _, dd := range depositDatas {
+		if err := deposit.WriteDepositDataFile(dd, network, conf.DataDir); err != nil {
+			return err
+		}
+		log.Debug(ctx, "Saved deposit data file to disk", z.Str("filepath", deposit.GetDepositFilePath(conf.DataDir, dd[0].Amount)))
 	}
-	log.Debug(ctx, "Saved deposit data file to disk")
 
 	// Signature verification and disk key write was step 6, advance to step 7
 	if err := nextStepSync(ctx); err != nil {
@@ -404,7 +417,7 @@ func setupP2P(ctx context.Context, key *k1.PrivateKey, conf Config, peers []p2p.
 
 	// Register peerinfo server handler for identification to relays (but do not run peerinfo client).
 	gitHash, _ := version.GitCommit()
-	_ = peerinfo.New(tcpNode, peerIDs, version.Version, defHash, gitHash, nil)
+	_ = peerinfo.New(tcpNode, peerIDs, version.Version, defHash, gitHash, nil, false)
 
 	return tcpNode, func() {
 		_ = tcpNode.Close()
@@ -477,8 +490,9 @@ func startSyncProtocol(ctx context.Context, tcpNode host.Host, key *k1.PrivateKe
 			break
 		}
 
-		// Sleep for 100ms to let clients connect with each other.
-		time.Sleep(time.Millisecond * 100)
+		// Sleep for 250ms to let clients connect with each other.
+		// Must be at least two times greater than the sync messages period specified in client.go NewClient().
+		time.Sleep(time.Millisecond * 250)
 	}
 
 	// Disable reconnecting clients to other peer's server once all clients are connected.
@@ -530,7 +544,7 @@ func startSyncProtocol(ctx context.Context, tcpNode host.Host, key *k1.PrivateKe
 
 // signAndAggLockHash returns cluster lock file with aggregated signature after signing, exchange and aggregation of partial signatures.
 func signAndAggLockHash(ctx context.Context, shares []share, def cluster.Definition,
-	nodeIdx cluster.NodeIdx, ex *exchanger, depositDatas []eth2p0.DepositData, valRegs []core.VersionedSignedValidatorRegistration,
+	nodeIdx cluster.NodeIdx, ex *exchanger, depositDatas [][]eth2p0.DepositData, valRegs []core.VersionedSignedValidatorRegistration,
 ) (cluster.Lock, error) {
 	vals, err := createDistValidators(shares, depositDatas, valRegs)
 	if err != nil {
@@ -588,20 +602,32 @@ func signAndAggLockHash(ctx context.Context, shares []share, def cluster.Definit
 }
 
 // signAndAggDepositData returns the deposit datas for each DV after signing, exchange and aggregation of partial signatures.
-func signAndAggDepositData(ctx context.Context, ex *exchanger, shares []share, withdrawalAddresses []string,
-	network string, nodeIdx cluster.NodeIdx,
-) ([]eth2p0.DepositData, error) {
-	parSig, despositMsgs, err := signDepositMsgs(shares, nodeIdx.ShareIdx, withdrawalAddresses, network)
-	if err != nil {
-		return nil, err
+func signAndAggDepositData(ctx context.Context, ex *exchanger, shares []share,
+	withdrawalAddresses []string, network string,
+	nodeIdx cluster.NodeIdx, depositAmounts []eth2p0.Gwei,
+) ([][]eth2p0.DepositData, error) {
+	var depositDataForAmounts [][]eth2p0.DepositData
+
+	for i, amount := range depositAmounts {
+		parSig, despositMsgs, err := signDepositMsgs(shares, nodeIdx.ShareIdx, withdrawalAddresses, network, amount)
+		if err != nil {
+			return nil, err
+		}
+
+		peerSigs, err := ex.exchange(ctx, sigType(int(sigDepositData)+i), parSig)
+		if err != nil {
+			return nil, err
+		}
+
+		dd, err := aggDepositData(peerSigs, shares, despositMsgs, network)
+		if err != nil {
+			return nil, err
+		}
+
+		depositDataForAmounts = append(depositDataForAmounts, dd)
 	}
 
-	peerSigs, err := ex.exchange(ctx, sigDepositData, parSig)
-	if err != nil {
-		return nil, err
-	}
-
-	return aggDepositData(peerSigs, shares, despositMsgs, network)
+	return depositDataForAmounts, nil
 }
 
 // signAndAggValidatorRegistrations returns the pre-generated validator registrations objects after signing, exchange and aggregation of partial signatures.
@@ -697,7 +723,7 @@ func signLockHash(shareIdx int, shares []share, hash []byte) (core.ParSignedData
 }
 
 // signDepositMsgs returns a partially signed dataset containing signatures of the deposit message signing root.
-func signDepositMsgs(shares []share, shareIdx int, withdrawalAddresses []string, network string) (core.ParSignedDataSet, map[core.PubKey]eth2p0.DepositMessage, error) {
+func signDepositMsgs(shares []share, shareIdx int, withdrawalAddresses []string, network string, amount eth2p0.Gwei) (core.ParSignedDataSet, map[core.PubKey]eth2p0.DepositMessage, error) {
 	msgs := make(map[core.PubKey]eth2p0.DepositMessage)
 	set := make(core.ParSignedDataSet)
 	for i, share := range shares {
@@ -715,7 +741,7 @@ func signDepositMsgs(shares []share, shareIdx int, withdrawalAddresses []string,
 			return nil, nil, err
 		}
 
-		msg, err := deposit.NewMessage(pubkey, withdrawalHex)
+		msg, err := deposit.NewMessage(pubkey, withdrawalHex, amount)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -964,25 +990,22 @@ func aggValidatorRegistrations(
 
 // createDistValidators returns a slice of distributed validators from the provided
 // shares and deposit datas.
-func createDistValidators(shares []share, depositDatas []eth2p0.DepositData, valRegs []core.VersionedSignedValidatorRegistration) ([]cluster.DistValidator, error) {
+func createDistValidators(shares []share, depositDatas [][]eth2p0.DepositData, valRegs []core.VersionedSignedValidatorRegistration) ([]cluster.DistValidator, error) {
+	depositDatasMap := make(map[tbls.PublicKey][]eth2p0.DepositData)
+	for amountIndex := range depositDatas {
+		for ddIndex := range depositDatas[amountIndex] {
+			dd := depositDatas[amountIndex][ddIndex]
+			pk := tbls.PublicKey(dd.PublicKey)
+			depositDatasMap[pk] = append(depositDatasMap[pk], dd)
+		}
+	}
+
 	var dvs []cluster.DistValidator
+
 	for _, s := range shares {
 		msg := msgFromShare(s)
-
-		ddIdx := -1
-		for i, dd := range depositDatas {
-			if !bytes.Equal(msg.PubKey, dd.PublicKey[:]) {
-				continue
-			}
-			ddIdx = i
-
-			break
-		}
-		if ddIdx == -1 {
-			return nil, errors.New("deposit data not found")
-		}
-
 		regIdx := -1
+
 		for i, reg := range valRegs {
 			pubkey, err := reg.PubKey()
 			if err != nil {
@@ -1006,15 +1029,28 @@ func createDistValidators(shares []share, depositDatas []eth2p0.DepositData, val
 			return nil, err
 		}
 
+		var partialDepositData []cluster.DepositData
+
+		depositDatasList, ok := depositDatasMap[tbls.PublicKey(msg.PubKey)]
+		if !ok {
+			return nil, errors.New("deposit data not found for pubkey", z.Str("pubkey", hex.EncodeToString(msg.PubKey)))
+		}
+
+		for _, dd := range depositDatasList {
+			dd := dd
+			newDepositData := cluster.DepositData{
+				PubKey:                dd.PublicKey[:],
+				WithdrawalCredentials: dd.WithdrawalCredentials,
+				Amount:                int(dd.Amount),
+				Signature:             dd.Signature[:],
+			}
+			partialDepositData = append(partialDepositData, newDepositData)
+		}
+
 		dvs = append(dvs, cluster.DistValidator{
-			PubKey:    msg.PubKey,
-			PubShares: msg.PubShares,
-			DepositData: cluster.DepositData{
-				PubKey:                depositDatas[ddIdx].PublicKey[:],
-				WithdrawalCredentials: depositDatas[ddIdx].WithdrawalCredentials,
-				Amount:                int(depositDatas[ddIdx].Amount),
-				Signature:             depositDatas[ddIdx].Signature[:],
-			},
+			PubKey:              msg.PubKey,
+			PubShares:           msg.PubShares,
+			PartialDepositData:  partialDepositData,
 			BuilderRegistration: reg,
 		})
 	}
@@ -1039,12 +1075,21 @@ func writeLockToAPI(ctx context.Context, publishAddr string, lock cluster.Lock) 
 }
 
 // validateKeymanagerFlags returns an error if one keymanager flag is present but the other is not.
-func validateKeymanagerFlags(addr, authToken string) error {
+func validateKeymanagerFlags(ctx context.Context, addr, authToken string) error {
 	if addr != "" && authToken == "" {
 		return errors.New("--keymanager-address provided but --keymanager-auth-token absent. Please fix configuration flags")
 	}
 	if addr == "" && authToken != "" {
 		return errors.New("--keymanager-auth-token provided but --keymanager-address absent. Please fix configuration flags")
+	}
+
+	keymanagerURL, err := url.Parse(addr)
+	if err != nil {
+		return errors.Wrap(err, "failed to parse keymanager addr", z.Str("addr", addr))
+	}
+
+	if keymanagerURL.Scheme != "https" {
+		log.Warn(ctx, "Keymanager URL does not use https protocol", nil, z.Str("addr", addr))
 	}
 
 	return nil

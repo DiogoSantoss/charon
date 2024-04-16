@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package combine
 
@@ -15,6 +15,7 @@ import (
 	"github.com/obolnetwork/charon/cluster"
 	"github.com/obolnetwork/charon/cluster/manifest"
 	manifestpb "github.com/obolnetwork/charon/cluster/manifestpb/v1"
+	"github.com/obolnetwork/charon/eth2util"
 	"github.com/obolnetwork/charon/eth2util/keystore"
 	"github.com/obolnetwork/charon/tbls"
 	"github.com/obolnetwork/charon/tbls/tblsconv"
@@ -26,13 +27,19 @@ import (
 // Note all nodes directories must be preset and all validator private key shares must be present.
 //
 // Combine will create a new directory named after "outputDir", which will contain Keystore files.
-func Combine(ctx context.Context, inputDir, outputDir string, force, noverify bool, opts ...func(*options)) error {
+func Combine(ctx context.Context, inputDir, outputDir string, force, noverify bool, testnetConfig eth2util.Network, opts ...func(*options)) error {
 	o := options{
 		keyStoreFunc: keystore.StoreKeys,
 	}
 
 	for _, opt := range opts {
 		opt(&o)
+	}
+
+	// Check if custom testnet configuration is provided.
+	if testnetConfig.IsNonZero() {
+		// Add testnet config to supported networks.
+		eth2util.AddTestNetwork(testnetConfig)
 	}
 
 	if !filepath.IsAbs(outputDir) {
@@ -139,6 +146,26 @@ func Combine(ctx context.Context, inputDir, outputDir string, force, noverify bo
 		return errors.New("refusing to overwrite existing private key share", z.Str("path", ksPath))
 	}
 
+	if force {
+		matches, err := filepath.Glob(filepath.Join(outputDir, "keystore-*.json"))
+		if err != nil {
+			return errors.Wrap(err, "can't match keystore files")
+		}
+
+		passMatches, err := filepath.Glob(filepath.Join(outputDir, "keystore-*.txt"))
+		if err != nil {
+			return errors.Wrap(err, "can't match keystore password files")
+		}
+
+		matches = append(matches, passMatches...)
+
+		for _, match := range matches {
+			if err := os.RemoveAll(match); err != nil {
+				return errors.Wrap(err, "can't remove existing keystore file")
+			}
+		}
+	}
+
 	if err := o.keyStoreFunc(combinedKeys, outputDir); err != nil {
 		return errors.Wrap(err, "cannot store keystore")
 	}
@@ -222,6 +249,13 @@ func loadManifest(ctx context.Context, dir string, noverify bool) (*manifestpb.C
 			continue
 		}
 
+		// does this directory contains a "validator_keys" directory? if yes continue and add it as a candidate
+		vcdPath := filepath.Join(dir, sd.Name(), "validator_keys")
+		_, err = os.ReadDir(vcdPath)
+		if err != nil {
+			continue
+		}
+
 		// try opening the lock file
 		lockFile := filepath.Join(dir, sd.Name(), "cluster-lock.json")
 		manifestFile := filepath.Join(dir, sd.Name(), "cluster-manifest.pb")
@@ -237,13 +271,6 @@ func loadManifest(ctx context.Context, dir string, noverify bool) (*manifestpb.C
 			if lastCluster != nil && !bytes.Equal(lastCluster.LatestMutationHash, cl.LatestMutationHash) {
 				return nil, nil, errors.New("mismatching last mutation hash")
 			}
-		}
-
-		// does this directory contains a "validator_keys" directory? if yes continue and add it as a candidate
-		vcdPath := filepath.Join(dir, sd.Name(), "validator_keys")
-		_, err = os.ReadDir(vcdPath)
-		if err != nil {
-			continue
 		}
 
 		possibleValKeysDir = append(possibleValKeysDir, vcdPath)

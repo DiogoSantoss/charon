@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package p2p
 
@@ -46,12 +46,10 @@ func (ConnGater) InterceptPeerDial(_ peer.ID) (allow bool) {
 }
 
 func (ConnGater) InterceptAddrDial(_ peer.ID, _ multiaddr.Multiaddr) (allow bool) {
-	// TODO should limit dialing to the netlist
 	return true // don't filter address dials
 }
 
 func (ConnGater) InterceptAccept(_ network.ConnMultiaddrs) (allow bool) {
-	// TODO should limit accepting from the netlist
 	return true // don't filter incoming connections purely by address
 }
 

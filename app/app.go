@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 // Package app provides the top app-level abstraction and entrypoint for a charon DVC instance.
 // The sub-packages also provide app-level functionality.
@@ -50,7 +50,6 @@ import (
 	"github.com/obolnetwork/charon/core/dutydb"
 	"github.com/obolnetwork/charon/core/fetcher"
 	"github.com/obolnetwork/charon/core/infosync"
-	"github.com/obolnetwork/charon/core/leadercast"
 	"github.com/obolnetwork/charon/core/parsigdb"
 	"github.com/obolnetwork/charon/core/parsigex"
 	"github.com/obolnetwork/charon/core/priority"
@@ -59,6 +58,7 @@ import (
 	"github.com/obolnetwork/charon/core/tracker"
 	"github.com/obolnetwork/charon/core/validatorapi"
 	"github.com/obolnetwork/charon/eth2util"
+	"github.com/obolnetwork/charon/eth2util/enr"
 	"github.com/obolnetwork/charon/p2p"
 	"github.com/obolnetwork/charon/tbls"
 	"github.com/obolnetwork/charon/tbls/tblsconv"
@@ -77,6 +77,7 @@ type Config struct {
 	PrivKeyFile             string
 	PrivKeyLocking          bool
 	MonitoringAddr          string
+	DebugAddr               string
 	ValidatorAPIAddr        string
 	BeaconNodeAddrs         []string
 	JaegerAddr              string
@@ -88,6 +89,7 @@ type Config struct {
 	SyntheticBlockProposals bool
 	BuilderAPI              bool
 	SimnetBMockFuzz         bool
+	TestnetConfig           eth2util.Network
 
 	TestConfig TestConfig
 }
@@ -102,8 +104,6 @@ type TestConfig struct {
 	P2PKey *k1.PrivateKey
 	// ParSigExFunc provides an in-memory partial signature exchange.
 	ParSigExFunc func() core.ParSigEx
-	// LcastTransportFunc provides an in-memory leader cast transport.
-	LcastTransportFunc func() leadercast.Transport
 	// SimnetKeys provides private key shares for the simnet validatormock signer.
 	SimnetKeys []tbls.PrivateKey
 	// SimnetBMockOpts defines additional simnet beacon mock options.
@@ -146,6 +146,10 @@ func Run(ctx context.Context, conf Config) (err error) {
 
 		life.RegisterStart(lifecycle.AsyncAppCtx, lifecycle.StartPrivkeyLock, lifecycle.HookFuncErr(lockSvc.Run))
 		life.RegisterStop(lifecycle.StopPrivkeyLock, lifecycle.HookFuncMin(lockSvc.Close))
+	}
+
+	if conf.TestnetConfig.IsNonZero() {
+		eth2util.AddTestNetwork(conf.TestnetConfig)
 	}
 
 	if err := wireTracing(life, conf); err != nil {
@@ -191,11 +195,18 @@ func Run(ctx context.Context, conf Config) (err error) {
 		return errors.Wrap(err, "private key not matching cluster manifest file")
 	}
 
+	enrRec, err := enr.New(p2pKey)
+	if err != nil {
+		return errors.Wrap(err, "creating enr record from privkey")
+	}
+
 	log.Info(ctx, "Lock file loaded",
 		z.Str("peer_name", p2p.PeerName(tcpNode.ID())),
 		z.Int("peer_index", nodeIdx.PeerIdx),
-		z.Str("cluster_hash", lockHashHex),
 		z.Str("cluster_name", cluster.Name),
+		z.Str("cluster_hash", lockHashHex),
+		z.Str("cluster_hash_full", hex.EncodeToString(cluster.GetInitialMutationHash())),
+		z.Str("enr", enrRec.String()),
 		z.Int("peers", len(cluster.Operators)))
 
 	// Metric and logging labels.
@@ -231,7 +242,7 @@ func Run(ctx context.Context, conf Config) (err error) {
 
 	sender := new(p2p.Sender)
 
-	wirePeerInfo(life, tcpNode, peerIDs, cluster.InitialMutationHash, sender)
+	wirePeerInfo(life, tcpNode, peerIDs, cluster.InitialMutationHash, sender, conf.BuilderAPI)
 
 	qbftDebug := newQBFTDebugger()
 
@@ -257,8 +268,8 @@ func Run(ctx context.Context, conf Config) (err error) {
 		return err
 	}
 
-	wireMonitoringAPI(ctx, life, conf.MonitoringAddr, tcpNode, eth2Cl, peerIDs,
-		promRegistry, qbftDebug, pubkeys, seenPubkeys, vapiCalls)
+	wireMonitoringAPI(ctx, life, conf.MonitoringAddr, conf.DebugAddr, tcpNode, eth2Cl, peerIDs,
+		promRegistry, qbftDebug, pubkeys, seenPubkeys, vapiCalls, len(cluster.GetValidators()))
 
 	err = wireCoreWorkflow(ctx, life, conf, cluster, nodeIdx, tcpNode, p2pKey, eth2Cl,
 		peerIDs, sender, qbftDebug.AddInstance, seenPubkeysFunc, vapiCallsFunc)
@@ -271,9 +282,9 @@ func Run(ctx context.Context, conf Config) (err error) {
 }
 
 // wirePeerInfo wires the peerinfo protocol.
-func wirePeerInfo(life *lifecycle.Manager, tcpNode host.Host, peers []peer.ID, lockHash []byte, sender *p2p.Sender) {
+func wirePeerInfo(life *lifecycle.Manager, tcpNode host.Host, peers []peer.ID, lockHash []byte, sender *p2p.Sender, builderEnabled bool) {
 	gitHash, _ := version.GitCommit()
-	peerInfo := peerinfo.New(tcpNode, peers, version.Version, lockHash, gitHash, sender.SendReceive)
+	peerInfo := peerinfo.New(tcpNode, peers, version.Version, lockHash, gitHash, sender.SendReceive, builderEnabled)
 	life.RegisterStart(lifecycle.AsyncAppCtx, lifecycle.StartPeerInfo, lifecycle.HookFuncCtx(peerInfo.Run))
 }
 
@@ -439,7 +450,7 @@ func wireCoreWorkflow(ctx context.Context, life *lifecycle.Manager, conf Config,
 		return err
 	}
 
-	if err := wireVAPIRouter(ctx, life, conf.ValidatorAPIAddr, eth2Cl, vapi, vapiCalls); err != nil {
+	if err := wireVAPIRouter(ctx, life, conf.ValidatorAPIAddr, eth2Cl, vapi, vapiCalls, mutableConf); err != nil {
 		return err
 	}
 
@@ -462,7 +473,12 @@ func wireCoreWorkflow(ctx context.Context, life *lifecycle.Manager, conf Config,
 		return err
 	}
 
-	aggSigDB := aggsigdb.NewMemDB(deadlinerFunc("aggsigdb"))
+	var aggSigDB core.AggSigDB
+	if featureset.Enabled(featureset.AggSigDBV2) {
+		aggSigDB = aggsigdb.NewMemDBV2(deadlinerFunc("aggsigdb"))
+	} else {
+		aggSigDB = aggsigdb.NewMemDB(deadlinerFunc("aggsigdb"))
+	}
 
 	broadcaster, err := bcast.New(ctx, eth2Cl)
 	if err != nil {
@@ -471,8 +487,8 @@ func wireCoreWorkflow(ctx context.Context, life *lifecycle.Manager, conf Config,
 
 	retryer := retry.New[core.Duty](deadlineFunc)
 
-	cons, startCons, err := newConsensus(conf, cluster, tcpNode, p2pKey, sender,
-		nodeIdx, deadlinerFunc("consensus"), gaterFunc, qbftSniffer)
+	cons, startCons, err := newConsensus(cluster, tcpNode, p2pKey, sender,
+		deadlinerFunc("consensus"), gaterFunc, qbftSniffer)
 	if err != nil {
 		return err
 	}
@@ -532,10 +548,6 @@ func wirePrioritise(ctx context.Context, conf Config, life *lifecycle.Manager, t
 	sched core.Scheduler, p2pKey *k1.PrivateKey, deadlineFunc func(duty core.Duty) (time.Time, bool),
 	mutableConf *mutableConfig,
 ) error {
-	if !featureset.Enabled(featureset.Priority) {
-		return nil
-	}
-
 	cons, ok := coreCons.(*consensus.Component)
 	if !ok {
 		// Priority protocol not supported for leader cast.
@@ -610,7 +622,7 @@ func wireRecaster(ctx context.Context, eth2Cl eth2wrap.Client, sched core.Schedu
 		recaster.Subscribe(callback)
 	}
 
-	if !builderAPI || !featureset.Enabled(featureset.PreGenRegistrations) {
+	if !builderAPI {
 		return nil
 	}
 
@@ -652,9 +664,14 @@ func wireRecaster(ctx context.Context, eth2Cl eth2wrap.Client, sched core.Schedu
 func newTracker(ctx context.Context, life *lifecycle.Manager, deadlineFunc func(duty core.Duty) (time.Time, bool),
 	peers []p2p.Peer, eth2Cl eth2wrap.Client,
 ) (core.Tracker, error) {
-	slotDuration, err := eth2Cl.SlotDuration(ctx)
+	eth2Resp, err := eth2Cl.Spec(ctx, &eth2api.SpecOpts{})
 	if err != nil {
 		return nil, err
+	}
+
+	slotDuration, ok := eth2Resp.Data["SECONDS_PER_SLOT"].(time.Duration)
+	if !ok {
+		return nil, errors.Wrap(err, "fetch slot duration")
 	}
 
 	// Add InclMissedLag slots and InclCheckLag delay to analyser to capture missed inclusion errors.
@@ -690,9 +707,15 @@ func calculateTrackerDelay(ctx context.Context, cl eth2wrap.Client, now time.Tim
 	if err != nil {
 		return 0, err
 	}
-	slotDuration, err := cl.SlotDuration(ctx)
+
+	eth2Resp, err := cl.Spec(ctx, &eth2api.SpecOpts{})
 	if err != nil {
 		return 0, err
+	}
+
+	slotDuration, ok := eth2Resp.Data["SECONDS_PER_SLOT"].(time.Duration)
+	if !ok {
+		return 0, errors.New("fetch slot duration")
 	}
 
 	currentSlot := uint64(now.Sub(genesisTime) / slotDuration)
@@ -741,7 +764,7 @@ func newETH2Client(ctx context.Context, conf Config, life *lifecycle.Manager,
 
 	if conf.SimnetBMockFuzz {
 		log.Info(ctx, "Beaconmock fuzz configured!")
-		bmock, err := beaconmock.New(beaconmock.WithBeaconMockFuzzer())
+		bmock, err := beaconmock.New(beaconmock.WithBeaconMockFuzzer(), beaconmock.WithForkVersion([4]byte(forkVersion)))
 		if err != nil {
 			return nil, err
 		}
@@ -803,13 +826,15 @@ func newETH2Client(ctx context.Context, conf Config, life *lifecycle.Manager,
 		return nil, errors.Wrap(err, "new eth2 http client")
 	}
 
+	eth2Cl.SetForkVersion([4]byte(forkVersion))
+
 	if conf.SyntheticBlockProposals {
 		log.Info(ctx, "Synthetic block proposals enabled")
 		eth2Cl = eth2wrap.WithSyntheticDuties(eth2Cl)
 	}
 
 	// Check BN chain/network.
-	eth2Resp, err := eth2Cl.ForkSchedule(ctx)
+	eth2Resp, err := eth2Cl.ForkSchedule(ctx, &eth2api.ForkScheduleOpts{})
 	if err != nil {
 		return nil, errors.Wrap(err, "fetch fork schedule")
 	}
@@ -844,39 +869,21 @@ func newETH2Client(ctx context.Context, conf Config, life *lifecycle.Manager,
 }
 
 // newConsensus returns a new consensus component and its start lifecycle hook.
-func newConsensus(conf Config, cluster *manifestpb.Cluster, tcpNode host.Host, p2pKey *k1.PrivateKey,
-	sender *p2p.Sender, nodeIdx cluster.NodeIdx, deadliner core.Deadliner, gaterFunc core.DutyGaterFunc,
+func newConsensus(cluster *manifestpb.Cluster, tcpNode host.Host, p2pKey *k1.PrivateKey,
+	sender *p2p.Sender, deadliner core.Deadliner, gaterFunc core.DutyGaterFunc,
 	qbftSniffer func(*pbv1.SniffedConsensusInstance),
 ) (core.Consensus, lifecycle.IHookFunc, error) {
 	peers, err := manifest.ClusterPeers(cluster)
 	if err != nil {
 		return nil, nil, err
 	}
-	peerIDs, err := manifest.ClusterPeerIDs(cluster)
+
+	comp, err := consensus.New(tcpNode, sender, peers, p2pKey, deadliner, gaterFunc, qbftSniffer)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if featureset.Enabled(featureset.QBFTConsensus) {
-		comp, err := consensus.New(tcpNode, sender, peers, p2pKey, deadliner, gaterFunc, qbftSniffer)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		return comp, lifecycle.HookFuncCtx(comp.Start), nil
-	}
-
-	var lcastTransport leadercast.Transport
-	if conf.TestConfig.LcastTransportFunc != nil {
-		lcastTransport = conf.TestConfig.LcastTransportFunc()
-	} else {
-		// TODO(corver): Either deprecate leadercast or refactor it to use p2p.Sender (and protobufs).
-		lcastTransport = leadercast.NewP2PTransport(tcpNode, nodeIdx.PeerIdx, peerIDs)
-	}
-
-	lcast := leadercast.New(lcastTransport, nodeIdx.PeerIdx, len(peerIDs))
-
-	return lcast, lifecycle.HookFuncCtx(lcast.Run), nil
+	return comp, lifecycle.HookFuncCtx(comp.Start), nil
 }
 
 // createMockValidators creates mock validators identified by their public shares.
@@ -904,9 +911,11 @@ func createMockValidators(pubkeys []eth2p0.BLSPubKey) beaconmock.ValidatorSet {
 
 // wireVAPIRouter constructs the validator API router and registers it with the life cycle manager.
 func wireVAPIRouter(ctx context.Context, life *lifecycle.Manager, vapiAddr string, eth2Cl eth2wrap.Client,
-	handler validatorapi.Handler, vapiCalls func(),
+	handler validatorapi.Handler, vapiCalls func(), mutableConf *mutableConfig,
 ) error {
-	vrouter, err := validatorapi.NewRouter(ctx, handler, eth2Cl)
+	vrouter, err := validatorapi.NewRouter(ctx, handler, eth2Cl, func(slot uint64) bool {
+		return mutableConf.BuilderAPI(slot)
+	})
 	if err != nil {
 		return errors.Wrap(err, "new monitoring server")
 	}
@@ -942,7 +951,6 @@ func wireTracing(life *lifecycle.Manager, conf Config) error {
 }
 
 // setFeeRecipient returns a slot subscriber for scheduler which calls prepare_beacon_proposer endpoint at start of each epoch.
-// TODO(dhruv): move this somewhere else once more use-cases like this becomes clear.
 func setFeeRecipient(eth2Cl eth2wrap.Client, feeRecipientFunc func(core.PubKey) string) func(ctx context.Context, slot core.Slot) error {
 	onStartup := true
 	var osMutex sync.Mutex
@@ -1064,9 +1072,14 @@ func slotFromTimestamp(ctx context.Context, eth2Cl eth2wrap.Client, timestamp ti
 		return 0, errors.New("registration timestamp before genesis")
 	}
 
-	slotDuration, err := eth2Cl.SlotDuration(ctx)
+	eth2Resp, err := eth2Cl.Spec(ctx, &eth2api.SpecOpts{})
 	if err != nil {
 		return 0, err
+	}
+
+	slotDuration, ok := eth2Resp.Data["SECONDS_PER_SLOT"].(time.Duration)
+	if !ok {
+		return 0, errors.New("fetch slot duration")
 	}
 
 	delta := timestamp.Sub(genesis)

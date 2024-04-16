@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package health
 
@@ -326,6 +326,71 @@ func TestWarnLogsCheck(t *testing.T) {
 		testCheck(t, m, checkName, true,
 			genFam(metricName,
 				genCounter(topicA, 10, 20, 30, 40, 500)),
+		)
+	})
+}
+
+func TestHighRegistrationFailuresRateCheck(t *testing.T) {
+	m := Metadata{}
+	checkName := "high_registration_failures_rate"
+	metricName := "core_bcast_recast_errors_total"
+	pregenLabel := genLabels("source", "pregen")
+	downsteamLabel := genLabels("source", "downstream")
+
+	t.Run("no data", func(t *testing.T) {
+		testCheck(t, m, checkName, false, nil)
+	})
+
+	t.Run("same errors count", func(t *testing.T) {
+		testCheck(t, m, checkName, false,
+			genFam(metricName,
+				genGauge(pregenLabel, 1, 1, 1), // No increments
+			),
+		)
+	})
+
+	t.Run("incrementing errors count", func(t *testing.T) {
+		testCheck(t, m, checkName, true,
+			genFam(metricName,
+				genGauge(downsteamLabel, 0, 1, 2, 10),
+			),
+		)
+	})
+
+	t.Run("both labels have stable errors count", func(t *testing.T) {
+		testCheck(t, m, checkName, false,
+			genFam(metricName,
+				genGauge(pregenLabel, 1, 1, 1),
+				genGauge(downsteamLabel, 1, 1, 1),
+			),
+		)
+	})
+
+	t.Run("both labels have increasing errors count", func(t *testing.T) {
+		testCheck(t, m, checkName, true,
+			genFam(metricName,
+				genGauge(pregenLabel, 10, 15, 18),
+				genGauge(downsteamLabel, 1, 2, 3),
+			),
+		)
+	})
+}
+
+func TestMetricsHighCardinalityCheck(t *testing.T) {
+	m := Metadata{}
+	checkName := "metrics_high_cardinality"
+	metricName := "app_health_metrics_high_cardinality"
+
+	t.Run("no data", func(t *testing.T) {
+		testCheck(t, m, checkName, false, nil)
+	})
+
+	t.Run("high cardinality", func(t *testing.T) {
+		testCheck(t, m, checkName, true,
+			genFam(metricName,
+				genGauge(genLabels("name", "metric1"), 1, 1, 1),
+				genGauge(genLabels("name", "metric2"), 3, 5, 0),
+			),
 		)
 	})
 }

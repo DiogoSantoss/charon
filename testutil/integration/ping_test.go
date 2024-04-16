@@ -1,10 +1,11 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package integration_test
 
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net"
 	"regexp"
 	"testing"
@@ -31,7 +32,7 @@ import (
 func TestPingCluster(t *testing.T) {
 	skipIfDisabled(t)
 
-	// Nodes bind to random locahost ports,
+	// Nodes bind to random localhost ports,
 	// use relay,
 	// then upgrade to direct connections.
 	t.Run("relay_discovery_local", func(t *testing.T) {
@@ -40,7 +41,7 @@ func TestPingCluster(t *testing.T) {
 		})
 	})
 
-	// Nodes bind to random locahost ports,
+	// Nodes bind to random localhost ports,
 	// use relay, filters external dns multiaddrs only,
 	// then upgrade to direct connections.
 	t.Run("relay_discovery_externalhost", func(t *testing.T) {
@@ -51,7 +52,7 @@ func TestPingCluster(t *testing.T) {
 		})
 	})
 
-	// Nodes bind to random locahost ports,
+	// Nodes bind to random localhost ports,
 	// use relay, includes incorrect external IP, but should include local address,
 	// then upgrade to direct connections.
 	t.Run("relay_incorrect_externalhost", func(t *testing.T) {
@@ -79,7 +80,9 @@ func pingCluster(t *testing.T, test pingTest) {
 
 	const n = 3
 
-	lock, p2pKeys, _ := cluster.NewForT(t, 1, n, n, 0)
+	seed := 0
+	random := rand.New(rand.NewSource(int64(seed)))
+	lock, p2pKeys, _ := cluster.NewForT(t, 1, n, n, seed, random)
 	asserter := &pingAsserter{
 		asserter: asserter{
 			Timeout: time.Second * 10,

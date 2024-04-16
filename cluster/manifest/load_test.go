@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package manifest_test
 
@@ -56,7 +56,7 @@ func TestLoadManifest(t *testing.T) {
 	}{
 		{
 			name:     "no file",
-			errorMsg: "couldn't load cluster dag from either manifest or legacy lock file",
+			errorMsg: "no file found",
 		},
 		{
 			name:         "only manifest",
@@ -115,7 +115,9 @@ func testLoadLegacy(t *testing.T, version string) {
 		opts = append(opts, cluster.WithLegacyVAddrs(testutil.RandomETHAddress(), testutil.RandomETHAddress()))
 	}
 
-	lock, _, _ := cluster.NewForT(t, rand.Intn(10), k, n, 0, opts...)
+	seed := 0
+	random := rand.New(rand.NewSource(int64(seed)))
+	lock, _, _ := cluster.NewForT(t, rand.Intn(10), k, n, seed, random, opts...)
 
 	b, err := json.MarshalIndent(lock, "", "  ")
 	require.NoError(t, err)

@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package core
 
@@ -273,7 +273,7 @@ func (p *VersionedSignedBlindedProposal) sszValFromVersion(version eth2util.Data
 		return p.Capella, nil
 	case eth2util.DataVersionDeneb:
 		if p.Deneb == nil {
-			p.Deneb = new(eth2deneb.SignedBlindedBlockContents)
+			p.Deneb = new(eth2deneb.SignedBlindedBeaconBlock)
 		}
 
 		return p.Deneb, nil
@@ -350,7 +350,7 @@ func (p *VersionedBlindedProposal) sszValFromVersion(version eth2util.DataVersio
 		return p.Capella, nil
 	case eth2util.DataVersionDeneb:
 		if p.Deneb == nil {
-			p.Deneb = new(eth2deneb.BlindedBlockContents)
+			p.Deneb = new(eth2deneb.BlindedBeaconBlock)
 		}
 
 		return p.Deneb, nil

@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package core_test
 
@@ -37,6 +37,10 @@ func TestVerifyEth2SignedData(t *testing.T) {
 		{
 			name: "verify blinded beacon block capella",
 			data: testutil.RandomCapellaVersionedSignedBlindedProposal(),
+		},
+		{
+			name: "verify blinded beacon block deneb",
+			data: testutil.RandomDenebVersionedSignedBlindedProposal(),
 		},
 		{
 			name: "verify randao",

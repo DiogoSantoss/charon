@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package beaconmock
 
@@ -192,6 +192,27 @@ func WithValidatorSet(set ValidatorSet) Option {
 		mock.ActiveValidatorsFunc = func(ctx context.Context) (eth2wrap.ActiveValidators, error) {
 			return activeVals, nil
 		}
+
+		type getValidatorsResponse struct {
+			Data []*eth2v1.Validator `json:"data"`
+		}
+
+		var resp getValidatorsResponse
+		for _, v := range set {
+			resp.Data = append(resp.Data, v)
+		}
+
+		respJSON, err := json.Marshal(resp)
+		if err != nil {
+			//nolint:forbidigo // formatting an error in panic, it's okay
+			panic(fmt.Errorf("could not marshal pre-generated mock validator response, %w", err))
+		}
+
+		mock.overrides = append(mock.overrides, staticOverride{
+			Endpoint: "/eth/v1/beacon/states/head/validators",
+			Key:      "",
+			Value:    string(respJSON),
+		})
 	}
 }
 
@@ -550,8 +571,8 @@ func defaultMock(httpMock HTTPMock, httpServer *http.Server, clock clockwork.Clo
 		GenesisTimeFunc: func(ctx context.Context) (time.Time, error) {
 			return httpMock.GenesisTime(ctx)
 		},
-		NodeSyncingFunc: func(ctx context.Context) (*eth2v1.SyncState, error) {
-			resp, err := httpMock.NodeSyncing(ctx)
+		NodeSyncingFunc: func(ctx context.Context, opts *eth2api.NodeSyncingOpts) (*eth2v1.SyncState, error) {
+			resp, err := httpMock.NodeSyncing(ctx, opts)
 			if err != nil {
 				return nil, err
 			}
@@ -600,8 +621,8 @@ func defaultMock(httpMock HTTPMock, httpServer *http.Server, clock clockwork.Clo
 		SubmitSyncCommitteeContributionsFunc: func(context.Context, []*altair.SignedContributionAndProof) error {
 			return nil
 		},
-		ForkScheduleFunc: func(ctx context.Context) ([]*eth2p0.Fork, error) {
-			eth2Resp, err := httpMock.ForkSchedule(ctx)
+		ForkScheduleFunc: func(ctx context.Context, opts *eth2api.ForkScheduleOpts) ([]*eth2p0.Fork, error) {
+			eth2Resp, err := httpMock.ForkSchedule(ctx, opts)
 			if err != nil {
 				return nil, err
 			}

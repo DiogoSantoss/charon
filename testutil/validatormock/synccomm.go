@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package validatormock
 
@@ -372,7 +372,7 @@ func prepareSyncSelections(ctx context.Context, eth2Cl eth2wrap.Client, signFunc
 
 // getSubcommittees returns the subcommittee indexes for the provided sync committee duty.
 func getSubcommittees(ctx context.Context, eth2Cl eth2client.SpecProvider, duty *eth2v1.SyncCommitteeDuty) ([]eth2p0.CommitteeIndex, error) {
-	eth2Resp, err := eth2Cl.Spec(ctx)
+	eth2Resp, err := eth2Cl.Spec(ctx, &eth2api.SpecOpts{})
 	if err != nil {
 		return nil, err
 	}

@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package consensus
 
@@ -113,10 +113,16 @@ func TestDoubleEagerLinearRoundTimer(t *testing.T) {
 }
 
 func TestGetTimerFunc(t *testing.T) {
-	featureset.EnableForT(t, featureset.QBFTTimersABTest)
-
 	timerFunc := getTimerFunc()
+	require.Equal(t, timerEagerDoubleLinear, timerFunc(core.NewAttesterDuty(0)).Type())
+	require.Equal(t, timerEagerDoubleLinear, timerFunc(core.NewAttesterDuty(1)).Type())
+	require.Equal(t, timerEagerDoubleLinear, timerFunc(core.NewAttesterDuty(2)).Type())
+
+	featureset.DisableForT(t, featureset.EagerDoubleLinear)
+
+	timerFunc = getTimerFunc()
+
 	require.Equal(t, timerIncreasing, timerFunc(core.NewAttesterDuty(0)).Type())
 	require.Equal(t, timerIncreasing, timerFunc(core.NewAttesterDuty(1)).Type())
-	require.Equal(t, timerEagerDoubleLinear, timerFunc(core.NewAttesterDuty(2)).Type())
+	require.Equal(t, timerIncreasing, timerFunc(core.NewAttesterDuty(2)).Type())
 }

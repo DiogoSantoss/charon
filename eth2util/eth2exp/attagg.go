@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package eth2exp
 
@@ -16,7 +16,7 @@ import (
 )
 
 // BeaconCommitteeSelectionAggregator is the interface for aggregating beacon committee selection proofs in a DVT cluster.
-// TODO(dhruv): Should be removed once it is supported by go-eth2-client.
+// NOTE: It should be removed once it is supported by go-eth2-client.
 type BeaconCommitteeSelectionAggregator interface {
 	// AggregateBeaconCommitteeSelections returns DVT aggregated beacon committee selection proofs.
 	// This would call a new BN API endpoint: POST /eth/v1/validator/beacon_committee_selections

@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package validatorapi
 
@@ -104,8 +104,8 @@ type proposeBlindedBlockResponseCapella struct {
 }
 
 type proposeBlindedBlockResponseDeneb struct {
-	Version string                          `json:"version"`
-	Data    *eth2deneb.BlindedBlockContents `json:"data"`
+	Version string                        `json:"version"`
+	Data    *eth2deneb.BlindedBeaconBlock `json:"data"`
 }
 
 type proposeBlockResponseCapella struct {

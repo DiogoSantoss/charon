@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package beaconmock
 
@@ -84,7 +84,6 @@ func newHTTPServer(addr string, optionalHandlers map[string]http.HandlerFunc, ov
 		"/eth/v1/validator/prepare_beacon_proposer": func(w http.ResponseWriter, r *http.Request) {
 		},
 		"/eth/v1/events": func(w http.ResponseWriter, r *http.Request) {
-			// TODO(corver): Send keep alives
 			select {
 			case <-shutdown:
 			case <-r.Context().Done():

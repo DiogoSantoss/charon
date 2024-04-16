@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package eip712_test
 
@@ -18,7 +18,7 @@ func TestCreatorHash(t *testing.T) {
 		Domain: eip712.Domain{
 			Name:    "Obol",
 			Version: "1",
-			ChainID: uint64(eth2util.Sepolia.ChainID),
+			ChainID: eth2util.Sepolia.ChainID,
 		},
 		Type: eip712.Type{
 			Name: "CreatorConfigHash",

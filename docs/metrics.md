@@ -19,10 +19,12 @@ when storing metrics from multiple nodes or clusters in one Prometheus instance.
 | `app_eth2_latency_seconds` | Histogram | Latency in seconds for eth2 beacon node requests | `endpoint` |
 | `app_git_commit` | Gauge | Constant gauge with label set to current git commit hash | `git_hash` |
 | `app_health_checks` | Gauge | Application health checks by name and severity. Set to 1 for failing, 0 for ok. | `severity, name` |
+| `app_health_metrics_high_cardinality` | Gauge | Metrics with high cardinality by name. | `name` |
 | `app_log_error_total` | Counter | Total count of logged errors by topic | `topic` |
 | `app_log_warn_total` | Counter | Total count of logged warnings by topic | `topic` |
 | `app_monitoring_readyz` | Gauge | Set to 1 if the node is operational and monitoring api `/readyz` endpoint is returning 200s. Else `/readyz` is returning 500s and this metric is either set to 2 if the beacon node is down, or3 if the beacon node is syncing, or4 if quorum peers are not connected. |  |
 | `app_peer_name` | Gauge | Constant gauge with label set to the name of the cluster peer | `peer_name` |
+| `app_peerinfo_builder_api_enabled` | Gauge | Set to 1 if builder API is enabled on this peer, else 0 if disabled. | `peer` |
 | `app_peerinfo_clock_offset_seconds` | Gauge | Peer clock offset in seconds | `peer` |
 | `app_peerinfo_git_commit` | Gauge | Constant gauge with git_hash label set to peer`s git commit hash. | `peer, git_hash` |
 | `app_peerinfo_index` | Gauge | Constant gauge set to the peer index in the cluster definition | `peer` |

@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package peerinfo
 
@@ -52,5 +52,12 @@ var (
 		Subsystem: "peerinfo",
 		Name:      "version_support",
 		Help:      "Set to 1 if the peer's version is supported by (compatible with) the current version, else 0 if unsupported.",
+	}, []string{"peer"})
+
+	peerBuilderAPIEnabledGauge = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "app",
+		Subsystem: "peerinfo",
+		Name:      "builder_api_enabled",
+		Help:      "Set to 1 if builder API is enabled on this peer, else 0 if disabled.",
 	}, []string{"peer"})
 )

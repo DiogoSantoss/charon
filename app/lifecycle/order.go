@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package lifecycle
 
@@ -18,6 +18,7 @@ const (
 	StartAggSigDB
 	StartRelay
 	StartMonitoringAPI
+	StartDebugAPI
 	StartValidatorAPI
 	StartP2PPing
 	StartP2PRouters
@@ -42,5 +43,6 @@ const (
 	StopP2PPeerDB
 	StopP2PTCPNode
 	StopP2PUDPNode
+	StopDebugAPI
 	StopMonitoringAPI
 )

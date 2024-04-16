@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package eth2wrap
 
@@ -15,12 +15,13 @@ import (
 	eth2v1 "github.com/attestantio/go-eth2-client/api/v1"
 	eth2bellatrix "github.com/attestantio/go-eth2-client/api/v1/bellatrix"
 	eth2capella "github.com/attestantio/go-eth2-client/api/v1/capella"
+	eth2deneb "github.com/attestantio/go-eth2-client/api/v1/deneb"
 	eth2spec "github.com/attestantio/go-eth2-client/spec"
 	"github.com/attestantio/go-eth2-client/spec/bellatrix"
 	"github.com/attestantio/go-eth2-client/spec/capella"
+	"github.com/attestantio/go-eth2-client/spec/deneb"
 	eth2p0 "github.com/attestantio/go-eth2-client/spec/phase0"
 	shuffle "github.com/protolambda/eth2-shuffle"
-	"go.uber.org/zap"
 
 	"github.com/obolnetwork/charon/app/errors"
 	"github.com/obolnetwork/charon/app/log"
@@ -76,7 +77,6 @@ func (h *synthWrapper) getFeeRecipient(vIdx eth2p0.ValidatorIndex) bellatrix.Exe
 // ProposerDuties returns upstream proposer duties for the provided validator indexes or
 // upstream proposer duties and synthetic duties for all cluster validators if enabled.
 func (h *synthWrapper) ProposerDuties(ctx context.Context, opts *eth2api.ProposerDutiesOpts) (*eth2api.Response[[]*eth2v1.ProposerDuty], error) {
-	// TODO(corver): Should we support fetching duties for other validators not in the cluster?
 	duties, err := h.synthProposerCache.Duties(ctx, h.Client, opts.Epoch)
 	if err != nil {
 		return nil, err
@@ -151,7 +151,7 @@ func (h *synthWrapper) syntheticProposal(ctx context.Context, slot eth2p0.Slot, 
 		}
 		signed, err := h.Client.SignedBeaconBlock(ctx, opts)
 		if err != nil {
-			if fieldExists(err, zap.Int("status_code", http.StatusNotFound)) {
+			if z.ContainsField(err, z.Int("status_code", http.StatusNotFound)) {
 				continue
 			}
 
@@ -197,39 +197,19 @@ func (h *synthWrapper) syntheticProposal(ctx context.Context, slot eth2p0.Slot, 
 		proposal.Capella.ProposerIndex = vIdx
 		proposal.Capella.Body.ExecutionPayload.FeeRecipient = feeRecipient
 		proposal.Capella.Body.ExecutionPayload.Transactions = fraction(proposal.Capella.Body.ExecutionPayload.Transactions)
+	case eth2spec.DataVersionDeneb:
+		proposal.Deneb = &eth2deneb.BlockContents{}
+		proposal.Deneb.Block = signedBlock.Deneb.Message
+		proposal.Deneb.Block.Body.Graffiti = GetSyntheticGraffiti()
+		proposal.Deneb.Block.Slot = slot
+		proposal.Deneb.Block.ProposerIndex = vIdx
+		proposal.Deneb.Block.Body.ExecutionPayload.FeeRecipient = feeRecipient
+		proposal.Deneb.Block.Body.ExecutionPayload.Transactions = fraction(proposal.Deneb.Block.Body.ExecutionPayload.Transactions)
 	default:
 		return nil, errors.New("unsupported proposal version")
 	}
 
 	return proposal, nil
-}
-
-// fieldExists checks if the given field exists as part of the given error.
-func fieldExists(err error, field zap.Field) bool {
-	type structErr interface {
-		Fields() []z.Field
-	}
-
-	sterr, ok := err.(structErr) //nolint:errorlint
-	if !ok {
-		return false
-	}
-
-	zfs := sterr.Fields()
-	var zapFs []zap.Field
-	for _, field := range zfs {
-		field(func(zp zap.Field) {
-			zapFs = append(zapFs, zp)
-		})
-	}
-
-	for _, zaps := range zapFs {
-		if zaps.Equals(field) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // fraction returns a fraction of the transactions in the block.
@@ -274,6 +254,8 @@ func IsSyntheticBlindedBlock(block *eth2api.VersionedSignedBlindedProposal) bool
 		graffiti = block.Bellatrix.Message.Body.Graffiti
 	case eth2spec.DataVersionCapella:
 		graffiti = block.Capella.Message.Body.Graffiti
+	case eth2spec.DataVersionDeneb:
+		graffiti = block.Deneb.Message.Body.Graffiti
 	default:
 		return false
 	}
@@ -293,6 +275,8 @@ func IsSyntheticProposal(block *eth2api.VersionedSignedProposal) bool {
 		graffiti = block.Bellatrix.Message.Body.Graffiti
 	case eth2spec.DataVersionCapella:
 		graffiti = block.Capella.Message.Body.Graffiti
+	case eth2spec.DataVersionDeneb:
+		graffiti = block.Deneb.SignedBlock.Message.Body.Graffiti
 	default:
 		return false
 	}
@@ -543,7 +527,49 @@ func blindedProposal(proposal *eth2api.VersionedProposal) (*eth2api.VersionedBli
 				},
 			},
 		}
-	default: // TODO(xenowits): Add a case for deneb blinded block
+	case eth2spec.DataVersionDeneb:
+		resp = &eth2api.VersionedBlindedProposal{
+			Version: proposal.Version,
+			Deneb: &eth2deneb.BlindedBeaconBlock{
+				Slot:          proposal.Deneb.Block.Slot,
+				ProposerIndex: proposal.Deneb.Block.ProposerIndex,
+				ParentRoot:    proposal.Deneb.Block.ParentRoot,
+				StateRoot:     proposal.Deneb.Block.StateRoot,
+				Body: &eth2deneb.BlindedBeaconBlockBody{
+					RANDAOReveal:      proposal.Deneb.Block.Body.RANDAOReveal,
+					ETH1Data:          proposal.Deneb.Block.Body.ETH1Data,
+					Graffiti:          proposal.Deneb.Block.Body.Graffiti,
+					ProposerSlashings: proposal.Deneb.Block.Body.ProposerSlashings,
+					AttesterSlashings: proposal.Deneb.Block.Body.AttesterSlashings,
+					Attestations:      proposal.Deneb.Block.Body.Attestations,
+					Deposits:          proposal.Deneb.Block.Body.Deposits,
+					VoluntaryExits:    proposal.Deneb.Block.Body.VoluntaryExits,
+					SyncAggregate:     proposal.Deneb.Block.Body.SyncAggregate,
+					ExecutionPayloadHeader: &deneb.ExecutionPayloadHeader{
+						ParentHash:       proposal.Deneb.Block.Body.ExecutionPayload.ParentHash,
+						FeeRecipient:     proposal.Deneb.Block.Body.ExecutionPayload.FeeRecipient,
+						StateRoot:        proposal.Deneb.Block.Body.ExecutionPayload.StateRoot,
+						ReceiptsRoot:     proposal.Deneb.Block.Body.ExecutionPayload.ReceiptsRoot,
+						LogsBloom:        proposal.Deneb.Block.Body.ExecutionPayload.LogsBloom,
+						PrevRandao:       proposal.Deneb.Block.Body.ExecutionPayload.PrevRandao,
+						BlockNumber:      proposal.Deneb.Block.Body.ExecutionPayload.BlockNumber,
+						GasLimit:         proposal.Deneb.Block.Body.ExecutionPayload.GasLimit,
+						GasUsed:          proposal.Deneb.Block.Body.ExecutionPayload.GasUsed,
+						Timestamp:        proposal.Deneb.Block.Body.ExecutionPayload.Timestamp,
+						ExtraData:        proposal.Deneb.Block.Body.ExecutionPayload.ExtraData,
+						BaseFeePerGas:    proposal.Deneb.Block.Body.ExecutionPayload.BaseFeePerGas,
+						BlockHash:        proposal.Deneb.Block.Body.ExecutionPayload.BlockHash,
+						TransactionsRoot: eth2p0.Root{},
+						WithdrawalsRoot:  eth2p0.Root{},
+						BlobGasUsed:      proposal.Deneb.Block.Body.ExecutionPayload.BlobGasUsed,
+						ExcessBlobGas:    proposal.Deneb.Block.Body.ExecutionPayload.ExcessBlobGas,
+					},
+					BLSToExecutionChanges: proposal.Deneb.Block.Body.BLSToExecutionChanges,
+					BlobKZGCommitments:    proposal.Deneb.Block.Body.BlobKZGCommitments,
+				},
+			},
+		}
+	default:
 		return nil, errors.New("unsupported blinded proposal version")
 	}
 

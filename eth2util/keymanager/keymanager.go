@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 // Package keymanager provides ETH2 keymanager API (https://ethereum.github.io/keymanager-APIs/) functionalities.
 package keymanager
@@ -41,36 +41,33 @@ func (c Client) ImportKeystores(ctx context.Context, keystores []keystore.Keysto
 			z.Int("keystores", len(keystores)), z.Int("passwords", len(passwords)))
 	}
 
-	addr, err := url.JoinPath(c.baseURL, "/eth/v1/keystores")
+	keymanagerURL, err := url.ParseRequestURI(c.baseURL)
 	if err != nil {
-		return errors.Wrap(err, "invalid base url", z.Str("base_url", c.baseURL))
+		return errors.Wrap(err, "parse address", z.Str("addr", c.baseURL))
 	}
+
+	keystoresURL := keymanagerURL.JoinPath("/eth/v1/keystores")
 
 	req, err := newReq(keystores, passwords)
 	if err != nil {
 		return err
 	}
 
-	err = postKeys(ctx, addr, c.authToken, req)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return postKeys(ctx, keystoresURL.String(), c.authToken, req)
 }
 
 // VerifyConnection returns an error if the provided keymanager address is not reachable.
 func (c Client) VerifyConnection(ctx context.Context) error {
-	u, err := url.Parse(c.baseURL)
+	keymanagerURL, err := url.Parse(c.baseURL)
 	if err != nil {
-		return errors.Wrap(err, "parse address")
+		return errors.Wrap(err, "parse address", z.Str("addr", c.baseURL))
 	}
 
 	var d net.Dialer
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
-	conn, err := d.DialContext(ctx, "tcp", u.Host)
+	conn, err := d.DialContext(ctx, "tcp", keymanagerURL.Host)
 	if err != nil {
 		return errors.Wrap(err, "cannot ping address", z.Str("addr", c.baseURL))
 	}

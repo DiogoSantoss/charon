@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package dkg
 
@@ -13,8 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-
-	eth2p0 "github.com/attestantio/go-eth2-client/spec/phase0"
+	"strings"
 
 	"github.com/obolnetwork/charon/app/errors"
 	"github.com/obolnetwork/charon/app/log"
@@ -34,8 +33,14 @@ func loadDefinition(ctx context.Context, conf Config) (cluster.Definition, error
 
 	// Fetch definition from URI or disk
 
+	parsedURL, err := url.ParseRequestURI(conf.DefFile)
+
 	var def cluster.Definition
-	if validURI(conf.DefFile) {
+	if err == nil && parsedURL.Host != "" {
+		if !strings.HasPrefix(parsedURL.Scheme, "https") {
+			log.Warn(ctx, "Definition file URL does not use https protocol", nil, z.Str("addr", conf.DefFile))
+		}
+
 		var err error
 		def, err = cluster.FetchDefinition(ctx, conf.DefFile)
 		if err != nil {
@@ -81,6 +86,10 @@ func loadDefinition(ctx context.Context, conf Config) (cluster.Definition, error
 		}
 	}
 
+	if err := deposit.VerifyDepositAmounts(def.DepositAmounts); err != nil {
+		return cluster.Definition{}, err
+	}
+
 	return def, nil
 }
 
@@ -98,7 +107,6 @@ func writeKeysToKeymanager(ctx context.Context, keymanagerURL, authToken string,
 		}
 		passwords = append(passwords, password)
 
-		// TODO(gsora): needs to go away once we get rid of kryptology
 		store, err := keystore.Encrypt(s.SecretShare, password, rand.Reader)
 		if err != nil {
 			return err
@@ -122,10 +130,9 @@ func writeKeysToDisk(conf Config, shares []share) error {
 		secrets = append(secrets, s.SecretShare)
 	}
 
-	keysDir := path.Join(conf.DataDir, "/validator_keys")
-
-	if err := os.Mkdir(keysDir, os.ModePerm); err != nil {
-		return errors.Wrap(err, "mkdir /validator_keys")
+	keysDir, err := cluster.CreateValidatorKeysDir(conf.DataDir)
+	if err != nil {
+		return err
 	}
 
 	storeKeysFunc := keystore.StoreKeys
@@ -152,26 +159,6 @@ func writeLock(datadir string, lock cluster.Lock) error {
 	return nil
 }
 
-// writeDepositData writes deposit data file to disk.
-func writeDepositData(depositDatas []eth2p0.DepositData, network string, dataDir string) error {
-	// Serialize the deposit data into bytes
-	bytes, err := deposit.MarshalDepositData(depositDatas, network)
-	if err != nil {
-		return err
-	}
-
-	// Write it to disk
-	depositPath := path.Join(dataDir, "deposit-data.json")
-
-	//nolint:gosec // File needs to be read-only for everybody
-	err = os.WriteFile(depositPath, bytes, 0o444)
-	if err != nil {
-		return errors.Wrap(err, "write deposit data")
-	}
-
-	return nil
-}
-
 func checkClearDataDir(dataDir string) error {
 	// if dataDir is a file, return error
 	info, err := os.Stat(dataDir)
@@ -192,7 +179,6 @@ func checkClearDataDir(dataDir string) error {
 	disallowedEntities := map[string]struct{}{
 		"validator_keys":    {},
 		"cluster-lock.json": {},
-		"deposit-data.json": {},
 	}
 
 	necessaryEntities := map[string]bool{
@@ -200,7 +186,9 @@ func checkClearDataDir(dataDir string) error {
 	}
 
 	for _, entity := range dirContent {
-		if _, ok := disallowedEntities[entity.Name()]; ok {
+		isDepositData := strings.HasPrefix(entity.Name(), "deposit-data")
+
+		if _, disallowed := disallowedEntities[entity.Name()]; disallowed || isDepositData {
 			return errors.New("data directory not clean, cannot continue", z.Str("disallowed_entity", entity.Name()), z.Str("data-dir", dataDir))
 		}
 
@@ -245,13 +233,6 @@ func checkWrites(dataDir string) error {
 	}
 
 	return nil
-}
-
-// validURI returns true if the input string is a valid HTTP/HTTPS URI.
-func validURI(str string) bool {
-	u, err := url.Parse(str)
-
-	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // randomHex64 returns a random 64 character hex string. It uses crypto/rand.

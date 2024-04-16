@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package cluster
 
@@ -80,7 +80,7 @@ func digestEIP712(typ eip712Type, def Definition, operator Operator) ([]byte, er
 		Domain: eip712.Domain{
 			Name:    "Obol",
 			Version: "1",
-			ChainID: uint64(chainID),
+			ChainID: chainID,
 		},
 		Type: eip712.Type{
 			Name: typ.PrimaryType,

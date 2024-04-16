@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package cluster
 
@@ -8,10 +8,12 @@ import (
 	"io"
 	"time"
 
+	eth2p0 "github.com/attestantio/go-eth2-client/spec/phase0"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/obolnetwork/charon/app/errors"
 	"github.com/obolnetwork/charon/app/z"
+	"github.com/obolnetwork/charon/eth2util/deposit"
 	"github.com/obolnetwork/charon/eth2util/enr"
 	"github.com/obolnetwork/charon/p2p"
 )
@@ -36,6 +38,13 @@ func WithVersion(version string) func(*Definition) {
 	}
 }
 
+// WithDKGAlgorithm returns an option to set a non-default DKG algorithm in a new definition.
+func WithDKGAlgorithm(algorithm string) func(*Definition) {
+	return func(d *Definition) {
+		d.DKGAlgorithm = algorithm
+	}
+}
+
 // WithLegacyVAddrs returns an option to set single feeRecipient address and withdrawal address to validator addresses.
 func WithLegacyVAddrs(feeRecipientAddress, withdrawalAddress string) func(*Definition) {
 	return func(d *Definition) {
@@ -54,7 +63,7 @@ func WithLegacyVAddrs(feeRecipientAddress, withdrawalAddress string) func(*Defin
 // NewDefinition returns a new definition populated with the latest version, timestamp and UUID.
 // The hashes are also populated accordingly. Note that the hashes need to be recalculated when any field is modified.
 func NewDefinition(name string, numVals int, threshold int, feeRecipientAddresses []string, withdrawalAddresses []string,
-	forkVersionHex string, creator Creator, operators []Operator, random io.Reader, opts ...func(*Definition),
+	forkVersionHex string, creator Creator, operators []Operator, depositAmounts []int, random io.Reader, opts ...func(*Definition),
 ) (Definition, error) {
 	if len(feeRecipientAddresses) != numVals {
 		return Definition{}, errors.New("insufficient fee-recipient addresses")
@@ -65,15 +74,16 @@ func NewDefinition(name string, numVals int, threshold int, feeRecipientAddresse
 	}
 
 	def := Definition{
-		Version:       currentVersion,
-		Name:          name,
-		UUID:          uuid(random),
-		Timestamp:     time.Now().Format(time.RFC3339),
-		NumValidators: numVals,
-		Threshold:     threshold,
-		DKGAlgorithm:  dkgAlgo,
-		Operators:     operators,
-		Creator:       creator,
+		Version:        currentVersion,
+		Name:           name,
+		UUID:           uuid(random),
+		Timestamp:      time.Now().Format(time.RFC3339),
+		NumValidators:  numVals,
+		Threshold:      threshold,
+		DKGAlgorithm:   dkgAlgo,
+		Operators:      operators,
+		Creator:        creator,
+		DepositAmounts: deposit.EthsToGweis(depositAmounts),
 	}
 
 	for i := 0; i < numVals; i++ {
@@ -91,6 +101,10 @@ func NewDefinition(name string, numVals int, threshold int, feeRecipientAddresse
 
 	for _, opt := range opts {
 		opt(&def)
+	}
+
+	if len(depositAmounts) > 1 && !supportPartialDeposits(def.Version) {
+		return Definition{}, errors.New("the version does not support partial deposits", z.Str("version", def.Version))
 	}
 
 	return def.SetDefinitionHashes()
@@ -138,8 +152,11 @@ type Definition struct {
 	// ValidatorAddresses define addresses of each validator.
 	ValidatorAddresses []ValidatorAddresses `config_hash:"10" definition_hash:"10" json:"validators" ssz:"CompositeList[65536]"`
 
+	// DepositAmounts specifies partial deposit amounts that sum up to 32ETH.
+	DepositAmounts []eth2p0.Gwei `config_hash:"11" definition_hash:"11" json:"deposit_amounts" ssz:"uint64[256]"`
+
 	// ConfigHash uniquely identifies a cluster definition excluding operator ENRs and signatures.
-	ConfigHash []byte `json:"config_hash,0xhex" ssz:"Bytes32" config_hash:"-" definition_hash:"11"`
+	ConfigHash []byte `json:"config_hash,0xhex" ssz:"Bytes32" config_hash:"-" definition_hash:"12"`
 
 	// DefinitionHash uniquely identifies a cluster definition including operator ENRs and signatures.
 	DefinitionHash []byte `json:"definition_hash,0xhex" ssz:"Bytes32" config_hash:"-" definition_hash:"-"`
@@ -365,7 +382,9 @@ func (d Definition) MarshalJSON() ([]byte, error) {
 	case isAnyVersion(d2.Version, v1_4):
 		return marshalDefinitionV1x4(d2)
 	case isAnyVersion(d2.Version, v1_5, v1_6, v1_7):
-		return marshalDefinitionV1x5(d2)
+		return marshalDefinitionV1x5to7(d2)
+	case isAnyVersion(d2.Version, v1_8):
+		return marshalDefinitionV1x8(d2)
 	default:
 		return nil, errors.New("unsupported version")
 	}
@@ -406,7 +425,12 @@ func (d *Definition) UnmarshalJSON(data []byte) error {
 			return err
 		}
 	case isAnyVersion(version.Version, v1_5, v1_6, v1_7):
-		def, err = unmarshalDefinitionV1x5(data)
+		def, err = unmarshalDefinitionV1x5to7(data)
+		if err != nil {
+			return err
+		}
+	case isAnyVersion(version.Version, v1_8):
+		def, err = unmarshalDefinitionV1x8(data)
 		if err != nil {
 			return err
 		}
@@ -465,7 +489,7 @@ func marshalDefinitionV1x0or1(def Definition) ([]byte, error) {
 		DefinitionHash:      def.DefinitionHash,
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "marshal definition")
+		return nil, errors.Wrap(err, "marshal definition", z.Str("version", def.Version))
 	}
 
 	return resp, nil
@@ -493,7 +517,7 @@ func marshalDefinitionV1x2or3(def Definition) ([]byte, error) {
 		DefinitionHash:      def.DefinitionHash,
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "marshal definition")
+		return nil, errors.Wrap(err, "marshal definition", z.Str("version", def.Version))
 	}
 
 	return resp, nil
@@ -525,13 +549,13 @@ func marshalDefinitionV1x4(def Definition) ([]byte, error) {
 		},
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "marshal definition")
+		return nil, errors.Wrap(err, "marshal definition", z.Str("version", def.Version))
 	}
 
 	return resp, nil
 }
 
-func marshalDefinitionV1x5(def Definition) ([]byte, error) {
+func marshalDefinitionV1x5to7(def Definition) ([]byte, error) {
 	resp, err := json.Marshal(definitionJSONv1x5{
 		Name:               def.Name,
 		UUID:               def.UUID,
@@ -551,7 +575,34 @@ func marshalDefinitionV1x5(def Definition) ([]byte, error) {
 		},
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "marshal definition")
+		return nil, errors.Wrap(err, "marshal definition", z.Str("version", def.Version))
+	}
+
+	return resp, nil
+}
+
+func marshalDefinitionV1x8(def Definition) ([]byte, error) {
+	resp, err := json.Marshal(definitionJSONv1x8{
+		Name:               def.Name,
+		UUID:               def.UUID,
+		Version:            def.Version,
+		Timestamp:          def.Timestamp,
+		NumValidators:      def.NumValidators,
+		Threshold:          def.Threshold,
+		DKGAlgorithm:       def.DKGAlgorithm,
+		ValidatorAddresses: validatorAddressesToJSON(def.ValidatorAddresses),
+		ForkVersion:        def.ForkVersion,
+		ConfigHash:         def.ConfigHash,
+		DefinitionHash:     def.DefinitionHash,
+		Operators:          operatorsToV1x2orLater(def.Operators),
+		Creator: creatorJSON{
+			Address:         def.Creator.Address,
+			ConfigSignature: def.Creator.ConfigSignature,
+		},
+		DepositAmounts: def.DepositAmounts,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "marshal definition", z.Str("version", def.Version))
 	}
 
 	return resp, nil
@@ -655,7 +706,7 @@ func unmarshalDefinitionV1x4(data []byte) (def Definition, err error) {
 	}, nil
 }
 
-func unmarshalDefinitionV1x5(data []byte) (def Definition, err error) {
+func unmarshalDefinitionV1x5to7(data []byte) (def Definition, err error) {
 	var defJSON definitionJSONv1x5
 	if err := json.Unmarshal(data, &defJSON); err != nil {
 		return Definition{}, errors.Wrap(err, "unmarshal definition v1_5")
@@ -685,10 +736,50 @@ func unmarshalDefinitionV1x5(data []byte) (def Definition, err error) {
 	}, nil
 }
 
+func unmarshalDefinitionV1x8(data []byte) (def Definition, err error) {
+	var defJSON definitionJSONv1x8
+	if err := json.Unmarshal(data, &defJSON); err != nil {
+		return Definition{}, errors.Wrap(err, "unmarshal definition v1_8")
+	}
+
+	if len(defJSON.ValidatorAddresses) != defJSON.NumValidators {
+		return Definition{}, errors.New("num_validators not matching validators length")
+	}
+
+	if err := deposit.VerifyDepositAmounts(def.DepositAmounts); err != nil {
+		return Definition{}, errors.Wrap(err, "invalid deposit amounts")
+	}
+
+	return Definition{
+		Name:               defJSON.Name,
+		UUID:               defJSON.UUID,
+		Version:            defJSON.Version,
+		Timestamp:          defJSON.Timestamp,
+		NumValidators:      defJSON.NumValidators,
+		Threshold:          defJSON.Threshold,
+		DKGAlgorithm:       defJSON.DKGAlgorithm,
+		ForkVersion:        defJSON.ForkVersion,
+		ConfigHash:         defJSON.ConfigHash,
+		DefinitionHash:     defJSON.DefinitionHash,
+		Operators:          operatorsFromV1x2orLater(defJSON.Operators),
+		ValidatorAddresses: validatorAddressesFromJSON(defJSON.ValidatorAddresses),
+		Creator: Creator{
+			Address:         defJSON.Creator.Address,
+			ConfigSignature: defJSON.Creator.ConfigSignature,
+		},
+		DepositAmounts: defJSON.DepositAmounts,
+	}, nil
+}
+
 // supportEIP712Sigs returns true if the provided definition version supports EIP712 signatures.
 // Note that Definition versions prior to v1.3.0 don't support EIP712 signatures.
 func supportEIP712Sigs(version string) bool {
 	return !isAnyVersion(version, v1_0, v1_1, v1_2)
+}
+
+// supportPartialDeposits returns true if the provided definition version supports partial deposits.
+func supportPartialDeposits(version string) bool {
+	return isAnyVersion(version, v1_8)
 }
 
 func eip712SigsPresent(operators []Operator) bool {
@@ -735,7 +826,7 @@ type definitionJSONv1x2or3 struct {
 	DefinitionHash      ethHex                    `json:"definition_hash"`
 }
 
-// definitionJSONv1x4 is the json formatter of Definition for versions v1.4.
+// definitionJSONv1x4 is the json formatter of Definition for version v1.4.
 type definitionJSONv1x4 struct {
 	Name                string                    `json:"name,omitempty"`
 	Creator             creatorJSON               `json:"creator"`
@@ -753,7 +844,7 @@ type definitionJSONv1x4 struct {
 	DefinitionHash      ethHex                    `json:"definition_hash"`
 }
 
-// definitionJSONv1x5 is the json formatter of Definition for versions v1.5.
+// definitionJSONv1x5 is the json formatter of Definition for versions v1.5 to v1.7.
 type definitionJSONv1x5 struct {
 	Name               string                    `json:"name,omitempty"`
 	Creator            creatorJSON               `json:"creator"`
@@ -766,6 +857,24 @@ type definitionJSONv1x5 struct {
 	ValidatorAddresses []validatorAddressesJSON  `json:"validators"`
 	DKGAlgorithm       string                    `json:"dkg_algorithm"`
 	ForkVersion        ethHex                    `json:"fork_version"`
+	ConfigHash         ethHex                    `json:"config_hash"`
+	DefinitionHash     ethHex                    `json:"definition_hash"`
+}
+
+// definitionJSONv1x8 is the json formatter of Definition for versions v1.8 or later.
+type definitionJSONv1x8 struct {
+	Name               string                    `json:"name,omitempty"`
+	Creator            creatorJSON               `json:"creator"`
+	Operators          []operatorJSONv1x2orLater `json:"operators"`
+	UUID               string                    `json:"uuid"`
+	Version            string                    `json:"version"`
+	Timestamp          string                    `json:"timestamp,omitempty"`
+	NumValidators      int                       `json:"num_validators"`
+	Threshold          int                       `json:"threshold"`
+	ValidatorAddresses []validatorAddressesJSON  `json:"validators"`
+	DKGAlgorithm       string                    `json:"dkg_algorithm"`
+	ForkVersion        ethHex                    `json:"fork_version"`
+	DepositAmounts     []eth2p0.Gwei             `json:"deposit_amounts"`
 	ConfigHash         ethHex                    `json:"config_hash"`
 	DefinitionHash     ethHex                    `json:"definition_hash"`
 }

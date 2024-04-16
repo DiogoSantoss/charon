@@ -1,14 +1,15 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package cluster
 
 import "testing"
 
 const (
-	currentVersion = v1_7
+	currentVersion = v1_8
 	dkgAlgo        = "default"
 
-	v1_7 = "v1.7.0" // Default
+	v1_8 = "v1.8.0" // Default
+	v1_7 = "v1.7.0"
 	v1_6 = "v1.6.0"
 	v1_5 = "v1.5.0"
 	v1_4 = "v1.4.0"
@@ -18,9 +19,12 @@ const (
 	v1_0 = "v1.0.0"
 
 	zeroNonce = 0
+
+	MinVersionForPartialDeposits = v1_8
 )
 
 var supportedVersions = map[string]bool{
+	v1_8: true,
 	v1_7: true,
 	v1_6: true,
 	v1_5: true,

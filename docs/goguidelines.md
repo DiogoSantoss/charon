@@ -51,7 +51,7 @@ checker := newReadyChecker(foo, bar)
 // Use the checker instance
 for checker.IsReady() { ... }
 ```
-Reasoning: The startReadyChecker contains all state and logic in one function and the resulting isReady function cannot be misused. The checker instance introduces a new type with fields that are accesible and can therefore be misused, it is also at risk of being extended with more logic and coupling.
+Reasoning: The startReadyChecker contains all state and logic in one function and the resulting isReady function cannot be misused. The checker instance introduces a new type with fields that are accessible and can therefore be misused, it is also at risk of being extended with more logic and coupling.
 
 ### Prefer functions returning functions over new types with methods #2
 ```go
@@ -66,7 +66,7 @@ mux.Handle("/foo", server.handleFoo)
 ```
 Reasoning: The newFooHandler is completely decoupled from other handlers, except via explicit dependencies. The server struct will grow and grow and will attract shared state and coupling.
 
-### Prefer function local variables and anonumous mutation functions over fields and methods
+### Prefer function local variables and anonymous mutation functions over fields and methods
 ```go
 func foo() {
    var x,y,z int

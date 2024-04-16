@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package validatorapi
 
@@ -635,7 +635,7 @@ func (c Component) AggregateBeaconCommitteeSelections(ctx context.Context, selec
 	for _, selection := range selections {
 		eth2Pubkey, ok := vals[selection.ValidatorIndex]
 		if !ok {
-			return nil, errors.Wrap(err, "validator not found")
+			return nil, errors.New("validator not found", z.Any("provided", selection.ValidatorIndex), z.Any("expected", vals.Indices()))
 		}
 
 		pubkey, err := core.PubKeyFromBytes(eth2Pubkey[:])
@@ -931,7 +931,7 @@ func (c Component) ProposerDuties(ctx context.Context, opts *eth2api.ProposerDut
 		duties[i].PubKey = pubshare
 	}
 
-	return wrapResponse(duties), nil
+	return wrapResponseWithMetadata(duties, eth2Resp.Metadata), nil
 }
 
 func (c Component) AttesterDuties(ctx context.Context, opts *eth2api.AttesterDutiesOpts) (*eth2api.Response[[]*eth2v1.AttesterDuty], error) {
@@ -954,7 +954,7 @@ func (c Component) AttesterDuties(ctx context.Context, opts *eth2api.AttesterDut
 		duties[i].PubKey = pubshare
 	}
 
-	return wrapResponse(duties), nil
+	return wrapResponseWithMetadata(duties, eth2Resp.Metadata), nil
 }
 
 // SyncCommitteeDuties obtains sync committee duties. If validatorIndices is nil it will return all duties for the given epoch.
@@ -1011,7 +1011,7 @@ func (c Component) Validators(ctx context.Context, opts *eth2api.ValidatorsOpts)
 }
 
 // NodeVersion returns the current version of charon.
-func (Component) NodeVersion(context.Context) (*eth2api.Response[string], error) {
+func (Component) NodeVersion(context.Context, *eth2api.NodeVersionOpts) (*eth2api.Response[string], error) {
 	commitSHA, _ := version.GitCommit()
 	charonVersion := fmt.Sprintf("obolnetwork/charon/%v-%s/%s-%s", version.Version, commitSHA, runtime.GOARCH, runtime.GOOS)
 
@@ -1047,9 +1047,14 @@ func (c Component) slotFromTimestamp(ctx context.Context, timestamp time.Time) (
 		return 0, errors.New("registration timestamp before genesis")
 	}
 
-	slotDuration, err := c.eth2Cl.SlotDuration(ctx)
+	eth2Resp, err := c.eth2Cl.Spec(ctx, &eth2api.SpecOpts{})
 	if err != nil {
 		return 0, err
+	}
+
+	slotDuration, ok := eth2Resp.Data["SECONDS_PER_SLOT"].(time.Duration)
+	if !ok {
+		return 0, errors.New("fetch slot duration")
 	}
 
 	delta := timestamp.Sub(genesis)
@@ -1152,9 +1157,14 @@ func (c Component) ProposerConfig(ctx context.Context) (*eth2exp.ProposerConfigR
 		},
 	}
 
-	slotDuration, err := c.eth2Cl.SlotDuration(ctx)
+	eth2Resp, err := c.eth2Cl.Spec(ctx, &eth2api.SpecOpts{})
 	if err != nil {
 		return nil, err
+	}
+
+	slotDuration, ok := eth2Resp.Data["SECONDS_PER_SLOT"].(time.Duration)
+	if !ok {
+		return nil, errors.New("fetch slot duration")
 	}
 
 	timestamp, err := c.eth2Cl.GenesisTime(ctx)
@@ -1193,4 +1203,9 @@ func (c Component) ProposerConfig(ctx context.Context) (*eth2exp.ProposerConfigR
 // wrapResponse wraps the provided data into an API Response and returns the response.
 func wrapResponse[T any](data T) *eth2api.Response[T] {
 	return &eth2api.Response[T]{Data: data}
+}
+
+// wrapResponseWithMetadata wraps the provided data and metadata into an API Response and returns the response.
+func wrapResponseWithMetadata[T any](data T, metadata map[string]any) *eth2api.Response[T] {
+	return &eth2api.Response[T]{Data: data, Metadata: metadata}
 }

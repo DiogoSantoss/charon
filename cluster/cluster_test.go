@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package cluster_test
 
@@ -21,6 +21,7 @@ import (
 //go:generate go test . -v -update -clean
 
 const (
+	v1_8 = "v1.8.0"
 	v1_7 = "v1.7.0"
 	v1_6 = "v1.6.0"
 	v1_5 = "v1.5.0"
@@ -36,7 +37,7 @@ func TestEncode(t *testing.T) {
 	for _, version := range cluster.SupportedVersionsForT(t) {
 		t.Run(version, func(t *testing.T) {
 			vStr := strings.ReplaceAll(version, ".", "_")
-			rand.Seed(1)
+			r := rand.New(rand.NewSource(1))
 
 			const (
 				numVals   = 2
@@ -51,13 +52,18 @@ func TestEncode(t *testing.T) {
 			}
 			// Definition version prior to v1.5 don't support multiple validator addresses.
 			if isAnyVersion(version, v1_0, v1_1, v1_2, v1_3, v1_4) {
-				opts = append(opts, cluster.WithLegacyVAddrs(testutil.RandomETHAddress(), testutil.RandomETHAddress()))
+				opts = append(opts, cluster.WithLegacyVAddrs(testutil.RandomETHAddressSeed(r), testutil.RandomETHAddressSeed(r)))
 			}
 
 			var feeRecipientAddrs, withdrawalAddrs []string
 			for i := 0; i < numVals; i++ {
-				feeRecipientAddrs = append(feeRecipientAddrs, testutil.RandomETHAddress())
-				withdrawalAddrs = append(withdrawalAddrs, testutil.RandomETHAddress())
+				feeRecipientAddrs = append(feeRecipientAddrs, testutil.RandomETHAddressSeed(r))
+				withdrawalAddrs = append(withdrawalAddrs, testutil.RandomETHAddressSeed(r))
+			}
+
+			var partialAmounts []int
+			if isAnyVersion(version, v1_8) {
+				partialAmounts = []int{16, 16}
 			}
 
 			definition, err := cluster.NewDefinition(
@@ -68,23 +74,24 @@ func TestEncode(t *testing.T) {
 				withdrawalAddrs,
 				eth2util.Sepolia.GenesisForkVersionHex,
 				cluster.Creator{
-					Address:         testutil.RandomETHAddress(),
-					ConfigSignature: testutil.RandomSecp256k1Signature(),
+					Address:         testutil.RandomETHAddressSeed(r),
+					ConfigSignature: testutil.RandomSecp256k1SignatureSeed(r),
 				},
 				[]cluster.Operator{
 					{
-						Address:         testutil.RandomETHAddress(),
-						ENR:             fmt.Sprintf("enr://%x", testutil.RandomBytes32()),
-						ConfigSignature: testutil.RandomSecp256k1Signature(),
-						ENRSignature:    testutil.RandomSecp256k1Signature(),
+						Address:         testutil.RandomETHAddressSeed(r),
+						ENR:             fmt.Sprintf("enr://%x", testutil.RandomBytes32Seed(r)),
+						ConfigSignature: testutil.RandomSecp256k1SignatureSeed(r),
+						ENRSignature:    testutil.RandomSecp256k1SignatureSeed(r),
 					},
 					{
-						Address:         testutil.RandomETHAddress(),
-						ENR:             fmt.Sprintf("enr://%x", testutil.RandomBytes32()),
-						ConfigSignature: testutil.RandomSecp256k1Signature(),
-						ENRSignature:    testutil.RandomSecp256k1Signature(),
+						Address:         testutil.RandomETHAddressSeed(r),
+						ENR:             fmt.Sprintf("enr://%x", testutil.RandomBytes32Seed(r)),
+						ConfigSignature: testutil.RandomSecp256k1SignatureSeed(r),
+						ENRSignature:    testutil.RandomSecp256k1SignatureSeed(r),
 					},
 				},
+				partialAmounts,
 				rand.New(rand.NewSource(0)),
 				opts...,
 			)
@@ -102,6 +109,11 @@ func TestEncode(t *testing.T) {
 			// Definition version prior to v1.4.0 don't support creator.
 			if isAnyVersion(version, v1_0, v1_1, v1_2, v1_3) {
 				definition.Creator = cluster.Creator{}
+			}
+
+			// Definition version prior to v1.8.0 don't support DepositAmounts.
+			if isAnyVersion(version, v1_0, v1_1, v1_2, v1_3, v1_4, v1_5, v1_6, v1_7) {
+				definition.DepositAmounts = nil
 			}
 
 			t.Run("definition_json_"+vStr, func(t *testing.T) {
@@ -127,42 +139,44 @@ func TestEncode(t *testing.T) {
 
 			lock := cluster.Lock{
 				Definition:         definition,
-				SignatureAggregate: testutil.RandomBytes32(),
+				SignatureAggregate: testutil.RandomBytes32Seed(r),
 				Validators: []cluster.DistValidator{
 					{
-						PubKey: testutil.RandomBytes48(),
+						PubKey: testutil.RandomBytes48Seed(r),
 						PubShares: [][]byte{
-							testutil.RandomBytes48(),
-							testutil.RandomBytes48(),
+							testutil.RandomBytes48Seed(r),
+							testutil.RandomBytes48Seed(r),
 						},
-						DepositData:         cluster.RandomDepositData(),
-						BuilderRegistration: cluster.RandomRegistration(t, eth2util.Sepolia.Name),
+						PartialDepositData:  []cluster.DepositData{cluster.RandomDepositDataSeed(r)},
+						BuilderRegistration: cluster.RandomRegistrationSeed(t, eth2util.Sepolia.Name, r),
 					}, {
-						PubKey: testutil.RandomBytes48(),
+						PubKey: testutil.RandomBytes48Seed(r),
 						PubShares: [][]byte{
-							testutil.RandomBytes48(),
-							testutil.RandomBytes48(),
+							testutil.RandomBytes48Seed(r),
+							testutil.RandomBytes48Seed(r),
 						},
-						DepositData:         cluster.RandomDepositData(),
-						BuilderRegistration: cluster.RandomRegistration(t, eth2util.Sepolia.Name),
+						PartialDepositData:  []cluster.DepositData{cluster.RandomDepositDataSeed(r)},
+						BuilderRegistration: cluster.RandomRegistrationSeed(t, eth2util.Sepolia.Name, r),
 					},
 				},
 				NodeSignatures: [][]byte{
-					testutil.RandomBytes32(),
-					testutil.RandomBytes32(),
+					testutil.RandomBytes32Seed(r),
+					testutil.RandomBytes32Seed(r),
 				},
 			}
 
 			// Make sure all the pubkeys are same.
 			for i := range lock.Validators {
-				lock.Validators[i].DepositData.PubKey = lock.Validators[i].PubKey
+				for j := range lock.Validators[i].PartialDepositData {
+					lock.Validators[i].PartialDepositData[j].PubKey = lock.Validators[i].PubKey
+				}
 				lock.Validators[i].BuilderRegistration.Message.PubKey = lock.Validators[i].PubKey
 			}
 
 			// Lock version prior to v1.6.0 don't support DepositData.
 			if isAnyVersion(version, v1_0, v1_1, v1_2, v1_3, v1_4, v1_5) {
 				for i := range lock.Validators {
-					lock.Validators[i].DepositData = cluster.DepositData{}
+					lock.Validators[i].PartialDepositData = nil
 				}
 			}
 
@@ -173,6 +187,15 @@ func TestEncode(t *testing.T) {
 				}
 
 				lock.NodeSignatures = nil
+			}
+
+			// Lock version v1.8.0 supports multiple PartialDepositData.
+			if isAnyVersion(version, v1_8) {
+				for i := range lock.Validators {
+					dd := cluster.RandomDepositDataSeed(r)
+					dd.PubKey = lock.Validators[i].PubKey
+					lock.Validators[i].PartialDepositData = append(lock.Validators[i].PartialDepositData, dd)
+				}
 			}
 
 			t.Run("lock_json_"+vStr, func(t *testing.T) {
@@ -247,7 +270,9 @@ func TestExamples(t *testing.T) {
 }
 
 func TestDefinitionPeers(t *testing.T) {
-	lock, _, _ := cluster.NewForT(t, 2, 3, 4, 5)
+	seed := 5
+	random := rand.New(rand.NewSource(int64(seed)))
+	lock, _, _ := cluster.NewForT(t, 2, 3, 4, seed, random)
 	peers, err := lock.Peers()
 	require.NoError(t, err)
 

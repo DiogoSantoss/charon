@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 // Package validatormock provides mock validator client functionality.
 package validatormock
@@ -151,36 +151,13 @@ func ProposeBlock(ctx context.Context, eth2Cl eth2wrap.Client, signFunc SignFunc
 			Signature: sig,
 		}
 	case eth2spec.DataVersionDeneb:
-		// Sign blob sidecars
-		var blobSidecars []*deneb.SignedBlobSidecar
-		for _, blob := range block.Deneb.BlobSidecars {
-			blobSigRoot, err := blob.HashTreeRoot()
-			if err != nil {
-				return err
-			}
-
-			blobSigData, err := signing.GetDataRoot(ctx, eth2Cl, signing.DomainBlobSidecar, epoch, blobSigRoot)
-			if err != nil {
-				return err
-			}
-
-			blobSig, err := signFunc(pubkey, blobSigData[:])
-			if err != nil {
-				return err
-			}
-
-			blobSidecars = append(blobSidecars, &deneb.SignedBlobSidecar{
-				Message:   blob,
-				Signature: blobSig,
-			})
-		}
-
 		signedBlock.Deneb = &eth2deneb.SignedBlockContents{
 			SignedBlock: &deneb.SignedBeaconBlock{
 				Message:   block.Deneb.Block,
 				Signature: sig,
 			},
-			SignedBlobSidecars: blobSidecars,
+			KZGProofs: block.Deneb.KZGProofs,
+			Blobs:     block.Deneb.Blobs,
 		}
 	default:
 		return errors.New("invalid block")
@@ -275,8 +252,6 @@ func ProposeBlindedBlock(ctx context.Context, eth2Cl eth2wrap.Client, signFunc S
 		return err
 	}
 
-	// TODO(corver): Create a function similar to `signing.Verify`
-	//  called `signing.UnsignedRoot(ctx, eth2Cl, core.UnsignedData)`
 	blockSigData, err := signing.GetDataRoot(ctx, eth2Cl, signing.DomainBeaconProposer, epoch, blockSigRoot)
 	if err != nil {
 		return err
@@ -302,36 +277,9 @@ func ProposeBlindedBlock(ctx context.Context, eth2Cl eth2wrap.Client, signFunc S
 			Signature: sig,
 		}
 	case eth2spec.DataVersionDeneb:
-		// Sign blinded blob sidecars
-		var blindedBlobSidecars []*eth2deneb.SignedBlindedBlobSidecar
-		for _, blob := range block.Deneb.BlindedBlobSidecars {
-			blobSigRoot, err := blob.HashTreeRoot()
-			if err != nil {
-				return err
-			}
-
-			blobSigData, err := signing.GetDataRoot(ctx, eth2Cl, signing.DomainBlobSidecar, epoch, blobSigRoot)
-			if err != nil {
-				return err
-			}
-
-			blobSig, err := signFunc(pubkey, blobSigData[:])
-			if err != nil {
-				return err
-			}
-
-			blindedBlobSidecars = append(blindedBlobSidecars, &eth2deneb.SignedBlindedBlobSidecar{
-				Message:   blob,
-				Signature: blobSig,
-			})
-		}
-
-		signedBlock.Deneb = &eth2deneb.SignedBlindedBlockContents{
-			SignedBlindedBlock: &eth2deneb.SignedBlindedBeaconBlock{
-				Message:   block.Deneb.BlindedBlock,
-				Signature: sig,
-			},
-			SignedBlindedBlobSidecars: blindedBlobSidecars,
+		signedBlock.Deneb = &eth2deneb.SignedBlindedBeaconBlock{
+			Message:   block.Deneb,
+			Signature: sig,
 		}
 	default:
 		return errors.New("invalid block")

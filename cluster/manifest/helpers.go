@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package manifest
 
@@ -131,8 +131,6 @@ func SignK1(m *manifestpb.Mutation, secret *k1.PrivateKey) (*manifestpb.SignedMu
 }
 
 // verifyK1SignedMutation verifies that the signed mutation is signed by a k1 key.
-//
-// TODO(corver): Figure out no-verify case.
 func verifyK1SignedMutation(signed *manifestpb.SignedMutation) error {
 	pubkey, err := k1.ParsePubKey(signed.Signer)
 	if err != nil {

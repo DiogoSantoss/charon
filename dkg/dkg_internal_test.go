@@ -1,8 +1,9 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package dkg
 
 import (
+	"context"
 	"testing"
 
 	eth2p0 "github.com/attestantio/go-eth2-client/spec/phase0"
@@ -136,7 +137,7 @@ func TestValidSignatures(t *testing.T) {
 	withdrawalAddr := testutil.RandomETHAddress()
 	network := eth2util.Goerli.Name
 
-	msg, err := deposit.NewMessage(eth2Pubkey, withdrawalAddr)
+	msg, err := deposit.NewMessage(eth2Pubkey, withdrawalAddr, deposit.MaxDepositAmount)
 	require.NoError(t, err)
 	sigRoot, err := deposit.GetMessageSigningRoot(msg, network)
 	require.NoError(t, err)
@@ -179,13 +180,19 @@ func TestValidateKeymanagerFlags(t *testing.T) {
 			authToken: "keymanager-auth-token",
 			errMsg:    "--keymanager-auth-token provided but --keymanager-address absent. Please fix configuration flags",
 		},
+		{
+			name:      "Malformed address provided",
+			addr:      "https://keymanager@example.com:-80",
+			authToken: "keymanager-auth-token",
+			errMsg:    "failed to parse keymanager addr",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateKeymanagerFlags(tt.addr, tt.authToken)
+			err := validateKeymanagerFlags(context.Background(), tt.addr, tt.authToken)
 			if tt.errMsg != "" {
-				require.Equal(t, err.Error(), tt.errMsg)
+				require.ErrorContains(t, err, tt.errMsg)
 			}
 		})
 	}

@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 // Package retry provides a generic async function executor with retries for robustness against network failures.
 // Functions are linked to a deadline, executed asynchronously and network or context errors retried with backoff
@@ -243,8 +243,6 @@ func isTemporaryBeaconErr(err error) bool {
 	if strings.Contains(err.Error(), "retryable") {
 		return true
 	}
-
-	// TODO(corver): Add more checks here.
 
 	return false
 }

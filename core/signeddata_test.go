@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package core_test
 
@@ -9,6 +9,7 @@ import (
 	eth2api "github.com/attestantio/go-eth2-client/api"
 	eth2bellatrix "github.com/attestantio/go-eth2-client/api/v1/bellatrix"
 	eth2capella "github.com/attestantio/go-eth2-client/api/v1/capella"
+	eth2deneb "github.com/attestantio/go-eth2-client/api/v1/deneb"
 	eth2spec "github.com/attestantio/go-eth2-client/spec"
 	"github.com/attestantio/go-eth2-client/spec/altair"
 	"github.com/attestantio/go-eth2-client/spec/bellatrix"
@@ -55,6 +56,18 @@ func TestSignedDataSetSignature(t *testing.T) {
 					Version: eth2spec.DataVersionCapella,
 					Capella: &eth2capella.SignedBlindedBeaconBlock{
 						Message:   testutil.RandomCapellaBlindedBeaconBlock(),
+						Signature: testutil.RandomEth2Signature(),
+					},
+				},
+			},
+		},
+		{
+			name: "versioned signed blinded proposal deneb",
+			data: core.VersionedSignedBlindedProposal{
+				VersionedSignedBlindedProposal: eth2api.VersionedSignedBlindedProposal{
+					Version: eth2spec.DataVersionDeneb,
+					Deneb: &eth2deneb.SignedBlindedBeaconBlock{
+						Message:   testutil.RandomDenebBlindedBeaconBlock(),
 						Signature: testutil.RandomEth2Signature(),
 					},
 				},

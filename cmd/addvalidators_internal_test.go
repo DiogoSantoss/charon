@@ -1,10 +1,11 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package cmd
 
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
@@ -103,7 +104,6 @@ func TestValidateConfigAddValidators(t *testing.T) {
 	}
 }
 
-// TODO(xenowits): Add more extensive tests, this is just a very simple unit test.
 func TestRunAddValidators(t *testing.T) {
 	const (
 		n        = 3
@@ -116,7 +116,9 @@ func TestRunAddValidators(t *testing.T) {
 	}
 
 	t.Run("add validators once", func(t *testing.T) {
-		lock, p2pKeys, _ := cluster.NewForT(t, valCount, n, n, 0)
+		seed := 0
+		random := rand.New(rand.NewSource(int64(seed)))
+		lock, p2pKeys, _ := cluster.NewForT(t, valCount, n, n, seed, random)
 
 		tmp := t.TempDir()
 		for _, dirname := range nodeDirnames {
@@ -150,7 +152,9 @@ func TestRunAddValidators(t *testing.T) {
 	})
 
 	t.Run("add validators twice", func(t *testing.T) {
-		lock, p2pKeys, _ := cluster.NewForT(t, valCount, n, n, 0)
+		seed := 0
+		random := rand.New(rand.NewSource(int64(seed)))
+		lock, p2pKeys, _ := cluster.NewForT(t, valCount, n, n, seed, random)
 
 		tmp := t.TempDir()
 		for _, dirname := range nodeDirnames {

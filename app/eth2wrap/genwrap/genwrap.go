@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 // Command genwrap provides a code generator for eth2client provider
 // methods implemented by eth2multi.Service.
@@ -51,6 +51,8 @@ type Client interface {
     ActiveValidatorsProvider
     SetValidatorCache(func(context.Context) (ActiveValidators, error))
 
+	SetForkVersion(forkVersion [4]byte)
+
     {{range .Providers}} eth2client.{{.}}
     {{end -}}
 }
@@ -68,7 +70,7 @@ type Client interface {
 			func(ctx context.Context, cl Client) ({{.ResultTypes}}){
 				return cl.{{.Name}}({{.ParamNames}})
 			},
-			{{.SuccessFunc}} m.bestIdx,
+			{{.SuccessFunc}} m.selector,
 		)
 
 		if err != nil {
@@ -128,6 +130,7 @@ type Client interface {
 		"ValidatorsProvider":                    true,
 		"ValidatorRegistrationsSubmitter":       true,
 		"VoluntaryExitSubmitter":                true,
+		"SetForkVersion":                        true,
 	}
 
 	// addImport indicates which types need hardcoded imports.

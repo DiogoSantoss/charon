@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package dutydb
 
@@ -127,8 +127,8 @@ func (db *MemDB) Store(_ context.Context, duty core.Duty, unsignedSet core.Unsig
 			if err != nil {
 				return err
 			}
-			db.resolveContribQueriesUnsafe()
 		}
+		db.resolveContribQueriesUnsafe()
 	default:
 		return errors.New("unsupported duty type", z.Str("type", duty.Type.String()))
 	}

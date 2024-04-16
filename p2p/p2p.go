@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package p2p
 
@@ -17,6 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/libp2p/go-libp2p/p2p/protocol/identify"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	ma "github.com/multiformats/go-multiaddr"
@@ -76,6 +77,7 @@ func NewTCPNode(ctx context.Context, cfg Config, key *k1.PrivateKey, connGater C
 			return filterAdvertisedAddrs(externalAddrs, internalAddrs, filterPrivateAddrs)
 		}),
 		libp2p.Transport(tcp.NewTCPTransport, tcpOpts...),
+		libp2p.SwarmOpts(swarm.WithDialRanker(swarm.NoDelayDialRanker)),
 	}
 
 	defaultOpts = append(defaultOpts, opts...)

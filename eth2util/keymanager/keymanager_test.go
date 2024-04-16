@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package keymanager_test
 
@@ -113,6 +113,12 @@ func TestImportKeystores(t *testing.T) {
 		cl := keymanager.New("", testAuthToken)
 		err := cl.ImportKeystores(ctx, keystores, []string{})
 		require.ErrorContains(t, err, "lengths of keystores and passwords don't match")
+	})
+
+	t.Run("malformed keymanager base URL", func(t *testing.T) {
+		cl := keymanager.New("https://1.1.1.1:-1234", testAuthToken)
+		err := cl.ImportKeystores(ctx, keystores, passwords)
+		require.ErrorContains(t, err, "parse address")
 	})
 }
 

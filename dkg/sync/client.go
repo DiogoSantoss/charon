@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package sync
 
@@ -38,7 +38,7 @@ func NewClient(tcpNode host.Host, peer peer.ID, hashSig []byte, version version.
 		done:      make(chan struct{}),
 		reconnect: true,
 		version:   version,
-		period:    250 * time.Millisecond,
+		period:    100 * time.Millisecond, // Must be at least two times lower than the sync timeout (dkg.go, startSyncProtocol)
 	}
 
 	for _, opt := range opts {
@@ -53,7 +53,7 @@ func NewClient(tcpNode host.Host, peer peer.ID, hashSig []byte, version version.
 // supports reestablishing on relay circuit recycling, and supports soft shutdown.
 type Client struct {
 	// Mutable state
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	connected bool
 	reconnect bool
 	step      int
@@ -113,16 +113,16 @@ func (c *Client) SetStep(step int) {
 
 // getStep returns the current step.
 func (c *Client) getStep() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	return c.step
 }
 
 // IsConnected returns if client is connected to the server or not.
 func (c *Client) IsConnected() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	return c.connected
 }
@@ -179,7 +179,7 @@ func (c *Client) sendMsgs(ctx context.Context, stream network.Stream) (relayBrok
 		resp, err := c.sendMsg(stream, shutdown)
 		if isRelayError(err) {
 			return true, false, err // Reconnect on relay errors
-		} else if err != nil { // TODO(dhruv): differentiate between connection errors and other errors.
+		} else if err != nil {
 			return false, true, err
 		} else if shutdown {
 			return false, false, nil
@@ -255,8 +255,8 @@ func (c *Client) DisableReconnect() {
 
 // shouldReconnect returns true if clients should re-attempt connecting to peers.
 func (c *Client) shouldReconnect() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	return c.reconnect
 }

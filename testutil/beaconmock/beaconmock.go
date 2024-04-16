@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 // Package beaconmock provides a mock beacon node server and client primarily for testing.
 //
@@ -101,6 +101,13 @@ func defaultHTTPMock() Mock {
 	}
 }
 
+// WithForkVersion sets the fork version provided in the Mock instance.
+func WithForkVersion(forkVersion [4]byte) Option {
+	return func(mock *Mock) {
+		mock.forkVersion = forkVersion
+	}
+}
+
 // Mock provides a mock beacon client and implements eth2wrap.Client.
 // Create a new instance with default behaviour via New and then override any function.
 type Mock struct {
@@ -110,6 +117,7 @@ type Mock struct {
 	overrides    []staticOverride
 	clock        clockwork.Clock
 	headProducer *headProducer
+	forkVersion  [4]byte
 
 	ActiveValidatorsFunc                   func(ctx context.Context) (eth2wrap.ActiveValidators, error)
 	AttestationDataFunc                    func(context.Context, eth2p0.Slot, eth2p0.CommitteeIndex) (*eth2p0.AttestationData, error)
@@ -127,7 +135,7 @@ type Mock struct {
 	ValidatorsByPubKeyFunc                 func(context.Context, string, []eth2p0.BLSPubKey) (map[eth2p0.ValidatorIndex]*eth2v1.Validator, error)
 	ValidatorsFunc                         func(context.Context, *eth2api.ValidatorsOpts) (map[eth2p0.ValidatorIndex]*eth2v1.Validator, error)
 	GenesisTimeFunc                        func(context.Context) (time.Time, error)
-	NodeSyncingFunc                        func(context.Context) (*eth2v1.SyncState, error)
+	NodeSyncingFunc                        func(context.Context, *eth2api.NodeSyncingOpts) (*eth2v1.SyncState, error)
 	SubmitValidatorRegistrationsFunc       func(context.Context, []*eth2api.VersionedSignedValidatorRegistration) error
 	SlotsPerEpochFunc                      func(context.Context) (uint64, error)
 	AggregateBeaconCommitteeSelectionsFunc func(context.Context, []*eth2exp.BeaconCommitteeSelection) ([]*eth2exp.BeaconCommitteeSelection, error)
@@ -141,7 +149,7 @@ type Mock struct {
 	SyncCommitteeContributionFunc          func(ctx context.Context, slot eth2p0.Slot, subcommitteeIndex uint64, beaconBlockRoot eth2p0.Root) (*altair.SyncCommitteeContribution, error)
 	SubmitSyncCommitteeSubscriptionsFunc   func(ctx context.Context, subscriptions []*eth2v1.SyncCommitteeSubscription) error
 	SubmitProposalPreparationsFunc         func(ctx context.Context, preparations []*eth2v1.ProposalPreparation) error
-	ForkScheduleFunc                       func(context.Context) ([]*eth2p0.Fork, error)
+	ForkScheduleFunc                       func(context.Context, *eth2api.ForkScheduleOpts) ([]*eth2p0.Fork, error)
 	ProposerConfigFunc                     func(context.Context) (*eth2exp.ProposerConfigResponse, error)
 }
 
@@ -169,7 +177,7 @@ func (m Mock) AttesterDuties(ctx context.Context, opts *eth2api.AttesterDutiesOp
 		return nil, err
 	}
 
-	return wrapResponse(duties), nil
+	return wrapResponseWithMetadata(duties), nil
 }
 
 func (m Mock) Proposal(ctx context.Context, opts *eth2api.ProposalOpts) (*eth2api.Response[*eth2api.VersionedProposal], error) {
@@ -194,8 +202,8 @@ func (m Mock) SubmitBlindedProposal(ctx context.Context, block *eth2api.Versione
 	return m.SubmitBlindedProposalFunc(ctx, block)
 }
 
-func (m Mock) ForkSchedule(ctx context.Context) (*eth2api.Response[[]*eth2p0.Fork], error) {
-	schedule, err := m.ForkScheduleFunc(ctx)
+func (m Mock) ForkSchedule(ctx context.Context, opts *eth2api.ForkScheduleOpts) (*eth2api.Response[[]*eth2p0.Fork], error) {
+	schedule, err := m.ForkScheduleFunc(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -203,8 +211,8 @@ func (m Mock) ForkSchedule(ctx context.Context) (*eth2api.Response[[]*eth2p0.For
 	return wrapResponse(schedule), nil
 }
 
-func (m Mock) NodeSyncing(ctx context.Context) (*eth2api.Response[*eth2v1.SyncState], error) {
-	schedule, err := m.NodeSyncingFunc(ctx)
+func (m Mock) NodeSyncing(ctx context.Context, opts *eth2api.NodeSyncingOpts) (*eth2api.Response[*eth2v1.SyncState], error) {
+	schedule, err := m.NodeSyncingFunc(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +230,7 @@ func (m Mock) ProposerDuties(ctx context.Context, opts *eth2api.ProposerDutiesOp
 		return nil, err
 	}
 
-	return wrapResponse(duties), nil
+	return wrapResponseWithMetadata(duties), nil
 }
 
 func (m Mock) SignedBeaconBlock(ctx context.Context, opts *eth2api.SignedBeaconBlockOpts) (*eth2api.Response[*eth2spec.VersionedSignedBeaconBlock], error) {
@@ -337,6 +345,10 @@ func (m Mock) ProposerConfig(ctx context.Context) (*eth2exp.ProposerConfigRespon
 	return m.ProposerConfigFunc(ctx)
 }
 
+func (Mock) SetForkVersion([4]byte) {
+	// This function is a no-op, since we mock the fork version at beaconmock initialization.
+}
+
 func (Mock) Name() string {
 	return "beacon-mock"
 }
@@ -359,4 +371,15 @@ func (m Mock) Close() error {
 // wrapResponse wraps the provided data into an API Response and returns the response.
 func wrapResponse[T any](data T) *eth2api.Response[T] {
 	return &eth2api.Response[T]{Data: data}
+}
+
+// wrapResponseWithMetadata wraps the provided data, adds metadata into an API Response and returns the response.
+func wrapResponseWithMetadata[T any](data T) *eth2api.Response[T] {
+	return &eth2api.Response[T]{
+		Data: data,
+		Metadata: map[string]any{
+			"execution_optimistic": false,
+			"dependent_root":       eth2p0.Root{},
+		},
+	}
 }

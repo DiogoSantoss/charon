@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 // Package tracer provides a global OpenTelemetry tracer.
 package tracer
@@ -129,7 +129,7 @@ func newTraceProvider(exp sdktrace.SpanExporter, service string) *sdktrace.Trace
 	)
 
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()), // TODO(corver): Reconsider 100% sampling.
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(r),
 	)

@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package obolapi_test
 
@@ -7,15 +7,16 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/obolnetwork/charon/app/obolapi"
 	"github.com/obolnetwork/charon/cluster"
+	"github.com/obolnetwork/charon/testutil"
 )
 
 // TestLockPublish tests.
@@ -45,7 +46,9 @@ func TestLockPublish(t *testing.T) {
 			},
 		}
 
-		lock, _, _ := cluster.NewForT(t, 3, 3, 4, 0, opts...)
+		seed := 0
+		random := rand.New(rand.NewSource(int64(seed)))
+		lock, _, _ := cluster.NewForT(t, 3, 3, 4, seed, random, opts...)
 
 		cl, err := obolapi.New(srv.URL)
 		require.NoError(t, err)
@@ -84,8 +87,7 @@ func TestLaunchpadDashURL(t *testing.T) {
 
 		require.NotEmpty(t, result)
 
-		parsedRes, err := url.ParseRequestURI(result)
-		require.NoError(t, err)
+		parsedRes := testutil.MustParseRequestURI(t, result)
 
 		require.Equal(t, "safe.today", parsedRes.Host)
 		require.Equal(

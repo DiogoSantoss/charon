@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package cmd
 
@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,13 +16,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	eth2p0 "github.com/attestantio/go-eth2-client/spec/phase0"
 	"github.com/stretchr/testify/require"
 	keystorev4 "github.com/wealdtech/go-eth2-wallet-encryptor-keystorev4"
 
 	"github.com/obolnetwork/charon/app/log"
 	"github.com/obolnetwork/charon/cluster"
 	"github.com/obolnetwork/charon/eth2util"
+	"github.com/obolnetwork/charon/eth2util/deposit"
 	"github.com/obolnetwork/charon/eth2util/keystore"
 	"github.com/obolnetwork/charon/tbls"
 	"github.com/obolnetwork/charon/tbls/tblsconv"
@@ -31,7 +35,7 @@ import (
 //go:generate go test . -run=TestCreateCluster -update
 
 func TestCreateCluster(t *testing.T) {
-	defPath := "../cluster/examples/cluster-definition-004.json"
+	defPath := "../cluster/examples/cluster-definition-005.json"
 	def, err := loadDefinition(context.Background(), defPath)
 	require.NoError(t, err)
 
@@ -49,6 +53,26 @@ func TestCreateCluster(t *testing.T) {
 				Threshold: 3,
 				NumDVs:    1,
 				Network:   eth2util.Goerli.Name,
+			},
+		},
+		{
+			Name: "two partial deposits",
+			Config: clusterConfig{
+				NumNodes:       4,
+				Threshold:      3,
+				NumDVs:         1,
+				Network:        eth2util.Goerli.Name,
+				DepositAmounts: []int{31, 1},
+			},
+		},
+		{
+			Name: "four partial deposits",
+			Config: clusterConfig{
+				NumNodes:       4,
+				Threshold:      3,
+				NumDVs:         1,
+				Network:        eth2util.Goerli.Name,
+				DepositAmounts: []int{8, 8, 8, 8},
 			},
 		},
 		{
@@ -207,6 +231,21 @@ func TestCreateCluster(t *testing.T) {
 				return config
 			},
 		},
+		{
+			Name: "custom testnet flags",
+			Config: clusterConfig{
+				Name:      "testnet",
+				NumNodes:  4,
+				Threshold: 3,
+				NumDVs:    3,
+				testnetConfig: eth2util.Network{
+					ChainID:               243,
+					Name:                  "obolnetwork",
+					GenesisForkVersionHex: "0x00000101",
+					GenesisTimestamp:      time.Now().Unix(),
+				},
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
@@ -284,8 +323,16 @@ func testCreateCluster(t *testing.T, conf clusterConfig, def cluster.Definition,
 
 		// check that there are lock.Definition.NumValidators different public keys in the validator slice
 		vals := make(map[string]struct{})
+		amounts := deposit.DedupAmounts(deposit.EthsToGweis(conf.DepositAmounts))
+		if len(amounts) == 0 {
+			amounts = []eth2p0.Gwei{deposit.MaxDepositAmount}
+		}
 		for _, val := range lock.Validators {
 			vals[val.PublicKeyHex()] = struct{}{}
+			require.Len(t, val.PartialDepositData, len(amounts))
+			for i, pdd := range val.PartialDepositData {
+				require.EqualValues(t, amounts[i], pdd.Amount)
+			}
 		}
 
 		require.Equal(t, lock.Definition.NumValidators, len(vals))
@@ -302,17 +349,25 @@ func testCreateCluster(t *testing.T, conf clusterConfig, def cluster.Definition,
 		}
 
 		previousVersions := []string{"v1.0.0", "v1.1.0", "v1.2.0", "v1.3.0", "v1.4.0", "v1.5.0"}
+		nowUTC := time.Now().UTC()
 		for _, val := range lock.Validators {
 			if isAnyVersion(lock.Version, previousVersions...) {
 				break
 			}
 
 			if isAnyVersion(lock.Version, "v1.6.0", "v1.7.0") {
-				require.NotEmpty(t, val.DepositData)
+				require.Len(t, val.PartialDepositData, 1)
 			}
 
 			if isAnyVersion(lock.Version, "v1.7.0") {
 				require.NotEmpty(t, val.BuilderRegistration)
+			}
+
+			if conf.SplitKeys {
+				// For SplitKeys mode, builder registration timestamp must be close to Now().
+				// This assumes the test does not execute longer than five minutes.
+				// We just need to make sure the message timestamp is not a genesis time.
+				require.Less(t, nowUTC.Sub(val.BuilderRegistration.Message.Timestamp), 5*time.Minute, "likely a genesis timestamp")
 			}
 		}
 
@@ -519,7 +574,9 @@ func TestMultipleAddresses(t *testing.T) {
 	})
 
 	t.Run("insufficient addresses from remote URL", func(t *testing.T) {
-		lock, _, _ := cluster.NewForT(t, 2, 3, 4, 1, func(d *cluster.Definition) {
+		seed := 1
+		random := rand.New(rand.NewSource(int64(seed)))
+		lock, _, _ := cluster.NewForT(t, 2, 3, 4, seed, random, func(d *cluster.Definition) {
 			d.ValidatorAddresses = []cluster.ValidatorAddresses{}
 		})
 

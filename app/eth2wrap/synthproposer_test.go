@@ -1,4 +1,4 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package eth2wrap_test
 
@@ -124,7 +124,7 @@ func TestSynthProposer(t *testing.T) {
 		}
 		require.Equal(t, eth2spec.DataVersionCapella, block.Version)
 
-		signed := testutil.RandomVersionedSignedProposal()
+		signed := testutil.RandomCapellaVersionedSignedProposal()
 		signed.Capella.Message = block.Capella
 		err = eth2Cl.SubmitProposal(ctx, signed)
 		require.NoError(t, err)

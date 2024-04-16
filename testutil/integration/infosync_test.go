@@ -1,10 +1,11 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package integration_test
 
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -28,12 +29,12 @@ import (
 func TestInfoSync(t *testing.T) {
 	skipIfDisabled(t)
 
-	featureset.EnableForT(t, featureset.Priority)
-
 	ctx, cancel := context.WithCancel(context.Background())
 
 	const n = 3
-	lock, p2pKeys, _ := cluster.NewForT(t, 1, n, n, 0)
+	seed := 0
+	random := rand.New(rand.NewSource(int64(seed)))
+	lock, p2pKeys, _ := cluster.NewForT(t, 1, n, n, seed, random)
 
 	asserter := &priorityAsserter{
 		asserter: asserter{Timeout: time.Second * 10},

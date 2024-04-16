@@ -1,10 +1,11 @@
-// Copyright © 2022-2023 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
+// Copyright © 2022-2024 Obol Labs Inc. Licensed under the terms of a Business Source License 1.1
 
 package eth2wrap
 
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/obolnetwork/charon/app/errors"
 	"github.com/obolnetwork/charon/app/z"
+	"github.com/obolnetwork/charon/eth2util"
 	"github.com/obolnetwork/charon/eth2util/eth2exp"
 )
 
@@ -62,10 +64,15 @@ func newHTTPAdapter(ethSvc *eth2http.Service, address string, timeout time.Durat
 //   - experimental interfaces
 type httpAdapter struct {
 	*eth2http.Service
-	address    string
-	timeout    time.Duration
-	valCacheMu sync.RWMutex
-	valCache   func(context.Context) (ActiveValidators, error)
+	address     string
+	timeout     time.Duration
+	valCacheMu  sync.RWMutex
+	valCache    func(context.Context) (ActiveValidators, error)
+	forkVersion [4]byte
+}
+
+func (h *httpAdapter) SetForkVersion(forkVersion [4]byte) {
+	h.forkVersion = forkVersion
 }
 
 func (h *httpAdapter) SetValidatorCache(valCache func(context.Context) (ActiveValidators, error)) {
@@ -182,6 +189,22 @@ func (h *httpAdapter) NodePeerCount(ctx context.Context) (int, error) {
 	return resp.Data.Connected, nil
 }
 
+// Domain returns the signing domain for a given domain type.
+// After EIP-7044, the VOLUNTARY_EXIT domain must always return a domain relative to the Capella hardfork.
+// This method returns just that for that domain type, otherwise follows the standard go-eth2-client flow.
+func (h *httpAdapter) Domain(ctx context.Context, domainType eth2p0.DomainType, epoch eth2p0.Epoch) (eth2p0.Domain, error) {
+	if domainType == (eth2p0.DomainType{0x04, 0x00, 0x00, 0x00}) { // voluntary exit domain
+		domain, err := eth2util.CapellaDomain(ctx, "0x"+hex.EncodeToString(h.forkVersion[:]), h.Service, h.Service)
+		if err != nil {
+			return eth2p0.Domain{}, errors.Wrap(err, "get domain")
+		}
+
+		return domain, nil
+	}
+
+	return h.Service.Domain(ctx, domainType, epoch)
+}
+
 type submitBeaconCommitteeSelectionsJSON struct {
 	Data []*eth2exp.BeaconCommitteeSelection `json:"data"`
 }
@@ -209,7 +232,7 @@ func httpPost(ctx context.Context, base string, endpoint string, body io.Reader,
 		return nil, errors.Wrap(err, "invalid address")
 	}
 
-	url, err := url.Parse(addr)
+	url, err := url.ParseRequestURI(addr)
 	if err != nil {
 		return nil, errors.Wrap(err, "invalid endpoint")
 	}
@@ -247,7 +270,7 @@ func httpGet(ctx context.Context, base string, endpoint string, timeout time.Dur
 		return nil, 0, errors.Wrap(err, "invalid address")
 	}
 
-	u, err := url.Parse(addr)
+	u, err := url.ParseRequestURI(addr)
 	if err != nil {
 		return nil, 0, errors.Wrap(err, "invalid endpoint")
 	}
