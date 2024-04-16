@@ -38,7 +38,7 @@ func (d Definition[I]) Faulty() int {
 
 type CommonCoinMessage[I any] struct {
 	Source         int64
-	Instance       I
+	Instance       I     // Duty
 	AgreementRound int64 // Alea round
 	AbaRound       int64 // ABA round
 	Sig            tbls.Signature
@@ -48,8 +48,6 @@ type CommonCoinMessage[I any] struct {
 func SampleCoin[I any](ctx context.Context, d Definition[I], t Transport[I], instance I, agreementRound int64, abaRound int64, process int64) (byte, error) {
 
 	ctx = log.WithTopic(ctx, "commoncoin")
-
-	log.Info(ctx, "Node id sampling common coin", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound))
 
 	// === State ===
 	var (
@@ -91,7 +89,7 @@ func SampleCoin[I any](ctx context.Context, d Definition[I], t Transport[I], ins
 			// verify signature validity
 			err := d.VerifySignature(msg.Source, coinName, msg.Sig)
 			if err != nil {
-				log.Info(ctx, "Node id received invalid signature from source", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound), z.I64("source", msg.Source))
+				log.Debug(ctx, "Node id received invalid signature from source", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound), z.I64("source", msg.Source))
 				continue
 			}
 
@@ -104,7 +102,7 @@ func SampleCoin[I any](ctx context.Context, d Definition[I], t Transport[I], ins
 					continue
 				}
 
-				log.Info(ctx, "Node id sampled value", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound), z.U8("coin", result))
+				log.Debug(ctx, "Coin result", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound), z.U8("result", result))
 
 				return result, nil
 			}

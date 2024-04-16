@@ -168,11 +168,11 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 	}
 
 	// Channels to communicate between go routines
-	channels := make([]chan VCBCMessage[int64], n)
+	channels := make([]chan VCBCMessage[int64, int64], n)
 	outputChannel := make(chan VCBCResult[int64], 1000)
 
 	for i := 0; i < n; i++ {
-		channels[i] = make(chan VCBCMessage[int64], 1000)
+		channels[i] = make(chan VCBCMessage[int64, int64], 1000)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -187,8 +187,8 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 
 		id := i + 1
 
-		trans := Transport[int64]{
-			Broadcast: func(ctx context.Context, msg VCBCMessage[int64]) error {
+		trans := Transport[int64, int64]{
+			Broadcast: func(ctx context.Context, msg VCBCMessage[int64, int64]) error {
 				for _, channel := range channels {
 					// Don't send final to requester to simulate lack of final message
 					if msg.Content.MsgType == MsgFinal && params.Requester != nil && params.Requester[int64(id)] {
@@ -198,7 +198,7 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 				}
 				return nil
 			},
-			Unicast: func(ctx context.Context, target int64, msg VCBCMessage[int64]) error {
+			Unicast: func(ctx context.Context, target int64, msg VCBCMessage[int64, int64]) error {
 				channels[target-1] <- msg
 				return nil
 			},
@@ -209,10 +209,6 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 		defs := Definition[int64, int64]{
 			BuildTag: func(instance int64, process int64) string {
 				return "ID." + strconv.Itoa(int(process)) + "." + strconv.Itoa(int(instance))
-			},
-			SlotFromTag: func(tag string) int64 {
-				slot, _ := strconv.Atoi(strings.Split(tag, ".")[2])
-				return int64(slot)
 			},
 			IdFromTag: func(tag string) int64 {
 				id, _ := strconv.Atoi(strings.Split(tag, ".")[1])

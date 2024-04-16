@@ -120,11 +120,27 @@ func TestAlea(t *testing.T) {
 			},
 		})
 	})
+
+	t.Run("happy req 0", func(t *testing.T) {
+		testAlea(t, testParametersAlea{
+			Instance: 0,
+			InputValue: map[int64]int64{
+				1: 1,
+			},
+			Requester: map[int64]bool{
+				2: true,
+			},
+			StartDelay: map[int64]time.Duration{
+				2: 1 * time.Second,
+			},
+		})
+	})
 }
 
 type testParametersAlea struct {
 	Instance   int64
 	InputValue map[int64]int64
+	Requester  map[int64]bool
 	StartDelay map[int64]time.Duration
 	DeadNodes  map[int64]bool
 	FaultySig  map[int64]bool
@@ -176,12 +192,12 @@ func testAlea(t *testing.T, p testParametersAlea) {
 
 	// Channels for VCBC/ABA/CommonCoin
 
-	vcbcChannels := make([]chan vcbc.VCBCMessage[int64], n)
+	vcbcChannels := make([]chan vcbc.VCBCMessage[int64, int64], n)
 	abaChannels := make([]chan aba.ABAMessage[int64], n)
 	commonCoinChannels := make([]chan commoncoin.CommonCoinMessage[int64], n)
 
 	for i := 0; i < n; i++ {
-		vcbcChannels[i] = make(chan vcbc.VCBCMessage[int64], 1000)
+		vcbcChannels[i] = make(chan vcbc.VCBCMessage[int64, int64], 1000)
 		abaChannels[i] = make(chan aba.ABAMessage[int64], 1000)
 		commonCoinChannels[i] = make(chan commoncoin.CommonCoinMessage[int64], 1000)
 	}
@@ -202,9 +218,6 @@ func testAlea(t *testing.T, p testParametersAlea) {
 		defs := Definition[int64, int64]{
 			GetLeader: func(instance, agreementRound int64) int64 {
 				return (instance+agreementRound)%int64(n) + 1
-			},
-			SignData: func(data []byte) (tbls.Signature, error) {
-				return tbls.Sign(shares[id], data)
 			},
 			Decide: func(ctx context.Context, instance, result int64) {
 				outputChannel <- result
@@ -280,16 +293,20 @@ func testAlea(t *testing.T, p testParametersAlea) {
 			Nodes: n,
 		}
 
-		transVCBC := vcbc.Transport[int64]{
-			Broadcast: func(ctx context.Context, msg vcbc.VCBCMessage[int64]) error {
+		transVCBC := vcbc.Transport[int64, int64]{
+			Broadcast: func(ctx context.Context, msg vcbc.VCBCMessage[int64, int64]) error {
 				for _, channel := range vcbcChannels {
+					// Don't send final to requester to simulate lack of final message
+					if msg.Content.MsgType == vcbc.MsgFinal && p.Requester != nil && p.Requester[int64(id)] {
+						continue
+					}
 					if channel != nil {
 						channel <- msg
 					}
 				}
 				return nil
 			},
-			Unicast: func(ctx context.Context, target int64, msg vcbc.VCBCMessage[int64]) error {
+			Unicast: func(ctx context.Context, target int64, msg vcbc.VCBCMessage[int64, int64]) error {
 				vcbcChannels[target-1] <- msg
 				return nil
 			},
@@ -300,10 +317,6 @@ func testAlea(t *testing.T, p testParametersAlea) {
 		defsVCBC := vcbc.Definition[int64, int64]{
 			BuildTag: func(instance int64, process int64) string {
 				return "ID." + strconv.Itoa(int(process)) + "." + strconv.Itoa(int(instance))
-			},
-			SlotFromTag: func(tag string) int64 {
-				slot, _ := strconv.Atoi(strings.Split(tag, ".")[2])
-				return int64(slot)
 			},
 			IdFromTag: func(tag string) int64 {
 				id, _ := strconv.Atoi(strings.Split(tag, ".")[1])
@@ -344,6 +357,13 @@ func testAlea(t *testing.T, p testParametersAlea) {
 				}
 			}
 
+			if p.Requester != nil && p.Requester[int64(id)] {
+				// Flush the message queue to pretent that he didn't receive any messages
+				for len(vcbcChannels[i]) != 0 {
+					<-vcbcChannels[i]
+				}
+			}
+
 			valueChannel := make(chan int64, 1)
 			valueChannel <- p.InputValue[int64(id)]
 
@@ -354,16 +374,6 @@ func testAlea(t *testing.T, p testParametersAlea) {
 			close(valueChannel)
 		}(i)
 	}
-
-	// Close channels when all done
-	go func() {
-		wg.Wait()
-		for i := 0; i < n; i++ {
-			close(vcbcChannels[i])
-			close(abaChannels[i])
-			close(commonCoinChannels[i])
-		}
-	}()
 
 	resultList := make([]int64, 0)
 
@@ -376,6 +386,14 @@ func testAlea(t *testing.T, p testParametersAlea) {
 		}
 	}
 	cancel()
+
+	// Close channels when all done
+	wg.Wait()
+	for i := 0; i < n; i++ {
+		close(vcbcChannels[i])
+		close(abaChannels[i])
+		close(commonCoinChannels[i])
+	}
 
 	require.Condition(t, func() (success bool) {
 		if len(resultList) <= 0 {

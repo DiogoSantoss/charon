@@ -11,45 +11,19 @@ import (
 	"github.com/obolnetwork/charon/core/alea/aba"
 	"github.com/obolnetwork/charon/core/alea/commoncoin"
 	"github.com/obolnetwork/charon/core/alea/vcbc"
-	"github.com/obolnetwork/charon/tbls"
 )
 
 type Definition[I any, V comparable] struct {
 	GetLeader func(instance I, agreementRound int64) int64
-	SignData  func(data []byte) (tbls.Signature, error)
 	Decide    func(ctx context.Context, instance I, result V)
 
 	Nodes int
 }
 
-/*
-	Questions:
-
-	How to avoid active wait
-	Error (in error.err) concurrent ite and write that should not exist
-	How to handle errors inside goroutines ?
-
-	How to use the networking layer instead of hand made channels ?
-	How to separate protocol messages so that ,e.g., ABA doesn't try to handle VCBC messages ?
-		anything to do with p2p.RegisterHandler ?
-	How to test using peer to peer network ?
-
-    Why do we need [I any, V comparable] ?
-		I is for instance (used as Core.Duty to identify a unique consensu instance)
-		V is for the value being agreed upon
-
-		Should instance have more parameters in this case ? (agreementRound, abaRound, etc) ?
-
-		How to log with this generic instance ?
-			Can pass message logs using definition
-
-
-*/
-
 func Run[I any, V comparable](
 	ctx context.Context,
 	d Definition[I, V],
-	dVCBC vcbc.Definition[I, V], tVCBC vcbc.Transport[V],
+	dVCBC vcbc.Definition[I, V], tVCBC vcbc.Transport[I, V],
 	dABA aba.Definition, tABA aba.Transport[I],
 	dCoin commoncoin.Definition[I], tCoin commoncoin.Transport[I],
 	instance I, process int64, inputValueCh <-chan V,
@@ -73,8 +47,10 @@ func Run[I any, V comparable](
 	// === State ===
 	var (
 		agreementRound    int64 = 0
+		valuePerPeer            = make(map[int64]V)
+		valuePerPeerCh          = make(chan struct{}) 
 		valuePerPeerMutex sync.Mutex
-		valuePerPeer      = make(map[int64]V)
+		errCh = make(chan error)
 	)
 
 	dVCBC.Subs = append(dVCBC.Subs, func(ctx context.Context, result vcbc.VCBCResult[V]) error {
@@ -82,6 +58,10 @@ func Run[I any, V comparable](
 		defer valuePerPeerMutex.Unlock()
 
 		valuePerPeer[dVCBC.IdFromTag(result.Tag)] = result.Result
+
+		// Reference: https://gist.github.com/creachadair/ed1ebebc7df66d19ad7100e8f9296d0a
+		close(valuePerPeerCh)
+		valuePerPeerCh = make(chan struct{})
 
 		log.Info(ctx, "Node id has value from source", z.I64("id", process), z.I64("source", dVCBC.IdFromTag(result.Tag)))
 		return nil
@@ -94,12 +74,15 @@ func Run[I any, V comparable](
 			for value := range inputValueCh {
 				// Close channel since only one value is expected per consensus instance
 				inputValueCh = nil
-				log.Info(ctx, "Broadcasting value", z.I64("id", process))
+				log.Info(ctx, "Broadcasting value", z.I64("id", process), z.Any("value", value))
 				err := vcbc.Run(ctx, dVCBC, tVCBC, instance, process, value)
 				if err != nil {
-					// TODO how handle error?
+					errCh <- err
+					log.Info(ctx, "Error in broadcast component", z.I64("id", process), z.Err(err))
+					return
 				}
 			}
+			log.Info(ctx, "Finished broadcasting value", z.I64("id", process))
 		}()
 
 		// Agreement component
@@ -122,28 +105,38 @@ func Run[I any, V comparable](
 
 				result, err := aba.Run(ctx, dABA, tABA, dCoin, tCoin, instance, process, agreementRound, proposal)
 
-				log.Info(ctx, "Received result from ABA", z.I64("id", process), z.I64("agreementRound", agreementRound), z.Uint("result", uint(result)))
 				if err != nil {
-					// TODO how handle error?
+					errCh <- err
+					log.Info(ctx, "Error in agreement component (ABA)", z.I64("id", process), z.Err(err))
+					return 
 				}
+				log.Info(ctx, "Received result from ABA", z.I64("id", process), z.I64("agreementRound", agreementRound), z.Uint("result", uint(result)))
 
 				if result == 1 {
 					valuePerPeerMutex.Lock()
 					value, exists := valuePerPeer[leaderId]
+					ch := valuePerPeerCh
 					valuePerPeerMutex.Unlock()
 
 					if !exists {
 						log.Info(ctx, "Leader value not found, requesting value", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("leaderId", leaderId))
-						err = vcbc.BroadcastRequest(ctx, dVCBC, tVCBC, instance, process, dVCBC.BuildTag(instance, process))
+						err = vcbc.BroadcastRequest(ctx, dVCBC, tVCBC, instance, process, dVCBC.BuildTag(instance, leaderId))
 						if err != nil {
-							// TODO how handle error?
+							errCh <- err
+							log.Info(ctx, "Error in agreement component (VCBC request)", z.I64("id", process), z.Err(err))
+							return
 						}
 
-						// TODO Should not active wait for the value
-						// How ?
-						for {
-							if value, exists = valuePerPeer[leaderId]; exists {
-								break
+						for !exists {
+							select {
+							case <-ctx.Done():
+								log.Info(ctx,"Context done, did not decide", z.I64("id", process), z.I64("agreementRound", agreementRound))
+								return
+							case <-ch:
+								valuePerPeerMutex.Lock()
+								value, exists = valuePerPeer[leaderId]
+								ch = valuePerPeerCh
+								valuePerPeerMutex.Unlock()
 							}
 						}
 					}
@@ -154,6 +147,7 @@ func Run[I any, V comparable](
 				}
 				agreementRound += 1
 			}
+			log.Info(ctx, "Finished agreement component", z.I64("id", process))
 		}()
 	}
 
@@ -161,8 +155,8 @@ func Run[I any, V comparable](
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case err := <-errCh:
+			return err
 		}
 	}
-
-	return nil
 }

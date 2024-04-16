@@ -42,6 +42,19 @@ func TestABA(t *testing.T) {
 		})
 	})
 
+	t.Run("happy 2", func(t *testing.T) {
+		testABA(t, testParametersABA{
+			Instance:       1,
+			AgreementRound: 2,
+			InputValue: map[int64]byte{
+				1: 1,
+				2: 1,
+				3: 1,
+				4: 1,
+			},
+		})
+	})
+
 	t.Run("different input", func(t *testing.T) {
 		testABA(t, testParametersABA{
 			Instance:       0,

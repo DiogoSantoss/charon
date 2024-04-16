@@ -45,6 +45,17 @@ func TestCommonCoin(t *testing.T) {
 		})
 	})
 
+	t.Run("one delayed", func(t *testing.T) {
+		testCommonCoin(t, testParametersCoin{
+			Instance:       0,
+			AgreementRound: 0,
+			AbaRound:       0,
+			StartDelay: map[int64]time.Duration{
+				4: 1 * time.Second * 5,
+			},
+		})
+	})
+
 	t.Run("one dead", func(t *testing.T) {
 		testCommonCoin(t, testParametersCoin{
 			Instance:       0,
@@ -172,6 +183,14 @@ func testCommonCoin(t *testing.T, p testParametersCoin) {
 			Nodes: n,
 		}
 
+		if p.FaultySig != nil {
+			if _, ok := p.FaultySig[int64(id)]; ok {
+				t.Logf("node %d has faulty signature", id)
+				secret, _ := tbls.GenerateSecretKey()
+				shares[id] = secret
+			}
+		}
+
 		go func(i int) {
 			defer wg.Done()
 
@@ -185,14 +204,6 @@ func testCommonCoin(t *testing.T, p testParametersCoin) {
 				if _, ok := p.DeadNodes[int64(id)]; ok {
 					t.Logf("node %d is dead", id)
 					return
-				}
-			}
-
-			if p.FaultySig != nil {
-				if _, ok := p.FaultySig[int64(id)]; ok {
-					t.Logf("node %d has faulty signature", id)
-					secret, _ := tbls.GenerateSecretKey()
-					shares[id] = secret
 				}
 			}
 
