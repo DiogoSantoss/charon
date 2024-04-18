@@ -186,8 +186,6 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 
 	ctx = log.WithTopic(ctx, "aba")
 
-	log.Debug(ctx, "Starting ABA", z.I64("id", process), z.I64("agreementRound", agreementRound))
-
 	// === State ===
 	var (
 		estimative                    = make(map[int64]byte)
@@ -270,7 +268,7 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 			switch rule {
 			case UponWeakSupportFinish: // Algorithm 1:1
 				if !alreadyBroadcastedFinish {
-					log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
+					//log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
 
 					alreadyBroadcastedFinish = true
 					msg.Source = process
@@ -282,11 +280,11 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 
 			case UponStrongSupportFinish: // Algorithm 1:2
 				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
-				log.Debug(ctx, "ABA result", z.I64("id", process), z.I64("agreementRound", msg.AgreementRound), z.I64("abaRound", msg.Round), z.U8("result", msg.Estimative))
+				//log.Debug(ctx, "ABA result", z.I64("id", process), z.I64("agreementRound", msg.AgreementRound), z.I64("abaRound", msg.Round), z.U8("result", msg.Estimative))
 				return msg.Estimative, nil
 
 			case UponWeakSupportInit: // Algorithm 1:5
-				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
+				//log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
 				msg.Source = process
 				err := t.Broadcast(ctx, msg)
 				if err != nil {
@@ -339,7 +337,7 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 
 			case UponSupportConf: // Algorithm 1:8
 
-				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule), z.Any("values", values))
+				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule), z.Any("values", values[msg.Round]))
 				sr, exists := coinResult[msg.Round]
 				if !exists {
 					coinValue, err := commoncoin.SampleCoin(ctx, dCoin, tCoin, instance, agreementRound, msg.Round, process) // Algorithm 1:9
@@ -353,7 +351,7 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 				//Algorithm 1:10
 				if len(values[msg.Round]) == 2 {
 					estimative[msg.Round+1] = sr
-					log.Debug(ctx, "Node id has two values", z.I64("id", process), z.I64("agreementRound", msg.AgreementRound), z.I64("abaRound", msg.Round))
+					log.Debug(ctx, "ABA two values", z.I64("id", process), z.I64("agreementRound", msg.AgreementRound), z.I64("abaRound", msg.Round))
 
 				} else if len(values[msg.Round]) == 1 {
 					var value byte
@@ -364,7 +362,7 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 					estimative[msg.Round+1] = value
 
 					if (value == sr) && (!alreadyBroadcastedFinish) {
-						log.Debug(ctx, "Node id has value matching with coin", z.I64("id", process), z.I64("agreementRound", msg.AgreementRound), z.I64("abaRound", msg.Round), z.U8("value", value))
+						log.Debug(ctx, "ABA value matches coin", z.I64("id", process), z.I64("agreementRound", msg.AgreementRound), z.I64("abaRound", msg.Round), z.U8("value", value))
 						alreadyBroadcastedFinish = true
 						err := t.Broadcast(ctx, ABAMessage[I]{
 							MsgType:        MsgFinish,

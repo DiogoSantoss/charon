@@ -179,8 +179,6 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 
 	ctx = log.WithTopic(ctx, "vcbc")
 
-	log.Debug(ctx, "Starting VCBC", z.I64("id", process))
-
 	// === State ===
 
 	var (
@@ -248,7 +246,7 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 					if err != nil {
 						return err
 					}
-					log.Debug(ctx, "VCBC sent ready", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
+					//log.Debug(ctx, "VCBC sent ready", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
 				}
 			case UponReady:
 				if partialSigsBySource[int(msg.Source)] == (tbls.Signature{}) && msg.Content.Tag == myTag {
@@ -314,7 +312,7 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 				if slices.Compare(hash, msg.Content.ValueHash) == 0 && thresholdSigByTag[msg.Content.Tag] == (tbls.Signature{}) {
 					thresholdSigByTag[msg.Content.Tag] = msg.ThresholdSig
 
-					log.Debug(ctx, "VCBC received final", z.I64("id", process), z.Str("tag", msg.Content.Tag))
+					//log.Debug(ctx, "VCBC received final", z.I64("id", process), z.Str("tag", msg.Content.Tag))
 					for _, sub := range d.Subs {
 						err := sub(ctx, VCBCResult[V]{
 							Tag:    msg.Content.Tag,

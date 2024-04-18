@@ -63,18 +63,15 @@ func Run[I any, V comparable](
 		close(valuePerPeerCh)
 		valuePerPeerCh = make(chan struct{})
 
-		log.Info(ctx, "Node id has value from source", z.I64("id", process), z.I64("source", dVCBC.IdFromTag(result.Tag)))
 		return nil
 	})
 
 	{
 		// Broadcast component
 		go func() {
-			log.Info(ctx, "Starting broadcast component", z.I64("id", process))
 			for value := range inputValueCh {
 				// Close channel since only one value is expected per consensus instance
 				inputValueCh = nil
-				log.Info(ctx, "Broadcasting value", z.I64("id", process), z.Any("value", value))
 				err := vcbc.Run(ctx, dVCBC, tVCBC, instance, process, value)
 				if err != nil {
 					errCh <- err
@@ -82,13 +79,10 @@ func Run[I any, V comparable](
 					return
 				}
 			}
-			log.Info(ctx, "Finished broadcasting value", z.I64("id", process))
 		}()
 
 		// Agreement component
 		go func() {
-			log.Info(ctx, "Starting agreement component", z.I64("id", process))
-
 			for {
 				leaderId := d.GetLeader(instance, agreementRound)
 
@@ -101,8 +95,6 @@ func Run[I any, V comparable](
 					proposal = byte(1)
 				}
 
-				log.Info(ctx, "Starting agreement round with leader and proposal", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("leaderId", leaderId), z.Uint("proposal", uint(proposal)))
-
 				result, err := aba.Run(ctx, dABA, tABA, dCoin, tCoin, instance, process, agreementRound, proposal)
 
 				if err != nil {
@@ -110,7 +102,7 @@ func Run[I any, V comparable](
 					log.Info(ctx, "Error in agreement component (ABA)", z.I64("id", process), z.Err(err))
 					return 
 				}
-				log.Info(ctx, "Received result from ABA", z.I64("id", process), z.I64("agreementRound", agreementRound), z.Uint("result", uint(result)))
+				log.Info(ctx, "Alea result from ABA", z.I64("id", process), z.I64("agreementRound", agreementRound), z.Uint("result", uint(result)))
 
 				if result == 1 {
 					valuePerPeerMutex.Lock()
@@ -119,7 +111,7 @@ func Run[I any, V comparable](
 					valuePerPeerMutex.Unlock()
 
 					if !exists {
-						log.Info(ctx, "Leader value not found, requesting value", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("leaderId", leaderId))
+						log.Info(ctx, "Alea empty leader value", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("leaderId", leaderId))
 						err = vcbc.BroadcastRequest(ctx, dVCBC, tVCBC, instance, process, dVCBC.BuildTag(instance, leaderId))
 						if err != nil {
 							errCh <- err
@@ -141,13 +133,12 @@ func Run[I any, V comparable](
 						}
 					}
 
-					log.Info(ctx, "Agreement reached", z.I64("id", process), z.I64("agreementRound", agreementRound))
+					log.Info(ctx, "Alea decided", z.I64("id", process), z.I64("agreementRound", agreementRound))
 					d.Decide(ctx, instance, value)
 					break
 				}
 				agreementRound += 1
 			}
-			log.Info(ctx, "Finished agreement component", z.I64("id", process))
 		}()
 	}
 
