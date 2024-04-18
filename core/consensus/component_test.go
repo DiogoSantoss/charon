@@ -24,6 +24,7 @@ import (
 	pbv1 "github.com/obolnetwork/charon/core/corepb/v1"
 	"github.com/obolnetwork/charon/eth2util/enr"
 	"github.com/obolnetwork/charon/p2p"
+	"github.com/obolnetwork/charon/tbls"
 	"github.com/obolnetwork/charon/testutil"
 )
 
@@ -119,7 +120,7 @@ func testComponent(t *testing.T, threshold, nodes int) {
 
 		gaterFunc := func(core.Duty) bool { return true }
 
-		c, err := consensus.New(hosts[i], new(p2p.Sender), peers, p2pkeys[i], testDeadliner{}, gaterFunc, sniffer)
+		c, err := consensus.New(hosts[i], new(p2p.Sender), peers, p2pkeys[i], testDeadliner{}, gaterFunc, sniffer, tbls.PrivateKey{},tbls.PublicKey{}, make(map[int64]tbls.PublicKey) )
 		require.NoError(t, err)
 		c.Subscribe(func(_ context.Context, _ core.Duty, set core.UnsignedDataSet) error {
 			results <- set

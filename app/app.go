@@ -119,6 +119,10 @@ type TestConfig struct {
 	// P2PFuzz enables peer to peer fuzzing of charon nodes in a cluster.
 	// If enabled, this node will send fuzzed data over p2p to its peers in the cluster.
 	P2PFuzz bool
+
+	AleaBLSPrivKey tbls.PrivateKey
+	AleaBLSPubKeys map[int64]tbls.PublicKey
+	AleaBLSFullKey tbls.PublicKey
 }
 
 // Run is the entrypoint for running a charon DVC instance.
@@ -487,7 +491,7 @@ func wireCoreWorkflow(ctx context.Context, life *lifecycle.Manager, conf Config,
 
 	retryer := retry.New[core.Duty](deadlineFunc)
 
-	cons, startCons, err := newConsensus(cluster, tcpNode, p2pKey, sender,
+	cons, startCons, err := newConsensus(conf, cluster, tcpNode, p2pKey, sender,
 		deadlinerFunc("consensus"), gaterFunc, qbftSniffer)
 	if err != nil {
 		return err
@@ -869,7 +873,7 @@ func newETH2Client(ctx context.Context, conf Config, life *lifecycle.Manager,
 }
 
 // newConsensus returns a new consensus component and its start lifecycle hook.
-func newConsensus(cluster *manifestpb.Cluster, tcpNode host.Host, p2pKey *k1.PrivateKey,
+func newConsensus(conf Config, cluster *manifestpb.Cluster, tcpNode host.Host, p2pKey *k1.PrivateKey,
 	sender *p2p.Sender, deadliner core.Deadliner, gaterFunc core.DutyGaterFunc,
 	qbftSniffer func(*pbv1.SniffedConsensusInstance),
 ) (core.Consensus, lifecycle.IHookFunc, error) {
@@ -878,7 +882,7 @@ func newConsensus(cluster *manifestpb.Cluster, tcpNode host.Host, p2pKey *k1.Pri
 		return nil, nil, err
 	}
 
-	comp, err := consensus.New(tcpNode, sender, peers, p2pKey, deadliner, gaterFunc, qbftSniffer)
+	comp, err := consensus.New(tcpNode, sender, peers, p2pKey, deadliner, gaterFunc, qbftSniffer, conf.TestConfig.AleaBLSPrivKey, conf.TestConfig.AleaBLSFullKey, conf.TestConfig.AleaBLSPubKeys)
 	if err != nil {
 		return nil, nil, err
 	}

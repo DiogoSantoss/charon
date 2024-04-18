@@ -211,6 +211,7 @@ func (io instanceIO) MaybeStart() bool {
 // New returns a new consensus QBFT component.
 func New(tcpNode host.Host, sender *p2p.Sender, peers []p2p.Peer, p2pKey *k1.PrivateKey,
 	deadliner core.Deadliner, gaterFunc core.DutyGaterFunc, snifferFunc func(*pbv1.SniffedConsensusInstance),
+	aleaBLSPrivKey tbls.PrivateKey, aleaBLSFullKey tbls.PublicKey, aleaBLSPubKeys map[int64]tbls.PublicKey, 
 ) (*Component, error) {
 	// Extract peer pubkeys.
 	keys := make(map[int64]*k1.PublicKey)
@@ -238,6 +239,9 @@ func New(tcpNode host.Host, sender *p2p.Sender, peers []p2p.Peer, p2pKey *k1.Pri
 		gaterFunc:   gaterFunc,
 		dropFilter:  log.Filter(),
 		timerFunc:   getTimerFunc(),
+		aleaBLSPrivKey: aleaBLSPrivKey,
+		aleaBLSFullKey: aleaBLSFullKey,
+		aleaBLSPubKeys: aleaBLSPubKeys,
 	}
 	c.mutable.instances = make(map[core.Duty]instanceIO)
 
@@ -259,6 +263,10 @@ type Component struct {
 	gaterFunc   core.DutyGaterFunc
 	dropFilter  z.Field // Filter buffer overflow errors (possible DDoS)
 	timerFunc   timerFunc
+
+	aleaBLSPrivKey tbls.PrivateKey
+	aleaBLSFullKey tbls.PublicKey
+	aleaBLSPubKeys map[int64]tbls.PublicKey
 
 	// Mutable state
 	mutable struct {
@@ -474,19 +482,34 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 	// Read BLS keys from disk
 	var (
 		path = "/compose/"
+		privKeyShare tbls.PrivateKey
+		pubKey tbls.PublicKey
+		pubKeyShares map[int64]tbls.PublicKey
 	)
 
+
 	privKeyShareBytes, _ := os.ReadFile(path + fmt.Sprintf("bls_share_private_%d", peerIdx+1))
-	privKeyShare := tbls.PrivateKey(privKeyShareBytes)
 
-	pubKeyBytes, _ := os.ReadFile(path + "bls_full_public")
-	pubKey := tbls.PublicKey(pubKeyBytes)
+	if len(privKeyShareBytes) == 0 {
 
-	pubKeyShares := make(map[int64]tbls.PublicKey)
-	for i := 1; i <= 4; i++ {
-		pubKeyShareBytes, _ := os.ReadFile(path + fmt.Sprintf("bls_share_public_%d", i))
-		pubKeyShares[int64(i)] = tbls.PublicKey(pubKeyShareBytes)
+		privKeyShare = c.aleaBLSPrivKey
+		pubKey = c.aleaBLSFullKey
+		pubKeyShares = c.aleaBLSPubKeys
+
+	} else {
+
+		privKeyShare = tbls.PrivateKey(privKeyShareBytes)
+	
+		pubKeyBytes, _ := os.ReadFile(path + "bls_full_public")
+		pubKey = tbls.PublicKey(pubKeyBytes)
+	
+		pubKeyShares = make(map[int64]tbls.PublicKey)
+		for i := 1; i <= 4; i++ {
+			pubKeyShareBytes, _ := os.ReadFile(path + fmt.Sprintf("bls_share_public_%d", i))
+			pubKeyShares[int64(i)] = tbls.PublicKey(pubKeyShareBytes)
+		}
 	}
+
 	// ============= TMP =============
 
 	getCommonCoinName := func(instance core.Duty, agreementRound, abaRound int64) ([]byte, error) {
@@ -517,7 +540,7 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 
 			err = tbls.Verify(pubKey, sid, totalSig)
 			if err != nil {
-				log.Info(ctx, "Failed to verify aggregate signature")
+				log.Error(ctx, "Failed to verify aggregate signature", err)
 				return 0, err
 			}
 
@@ -636,26 +659,6 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 
 	testingAlea := true
 
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	log.Info(ctx, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	
 	if testingAlea {
 		// Run the algo, blocking until the context is cancelled.
 		err = alea.Run[core.Duty, [32]byte](ctx, dAlea, dVCBC, tVCBC, dABA, tABA, dCoin, tCoin, duty, peerIdx+1, inst.hashCh)
@@ -663,7 +666,6 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 			consensusError.Inc()
 			return err // Only return non-context errors.
 		}
-		log.Info(ctx, "Alea protocol finished")
 	} else {
 		// Run the algo, blocking until the context is cancelled.
 		err = qbft.Run[core.Duty, [32]byte](ctx, def, qt, duty, peerIdx, inst.hashCh)
