@@ -584,34 +584,6 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 		Nodes: len(c.peers),
 	}
 
-	dAlea := alea.Definition[core.Duty, [32]byte]{
-
-		// GetLeader returns the deterministic leader index.
-		GetLeader: func(duty core.Duty, round int64) int64 {
-			return leader(duty, round, len(c.peers))+1
-		},
-
-		Decide: func(ctx context.Context, duty core.Duty, result [32]byte) {
-			defer endCtxSpan(ctx) // End the parent tracing span when decided
-
-			// Cast result to a proto message.
-			anyValue := &anypb.Any{Value: result[:]}
-			value,_ := anyValue.UnmarshalNew()
-
-			decided = true
-			// decidedRoundsGauge.WithLabelValues(duty.Type.String(), string(roundTimer.Type())).Set(float64(qcommit[0].Round()))
-			inst.decidedAtCh <- time.Now()
-
-			for _, sub := range c.subscribers() {
-				if err := sub(ctx, duty, value); err != nil {
-					log.Warn(ctx, "Subscriber error", err)
-				}
-			}
-		},
-
-		Nodes: len(c.peers),
-	}
-
 	// Create a new transport that handles sending and receiving for this instance.
 	t := transport{
 		component:      c,
@@ -622,6 +594,41 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 		recvBufferABA:  make(chan aba.ABAMessage[core.Duty]),
 		recvBufferVCBC: make(chan vcbc.VCBCMessage[core.Duty, [32]byte]),
 		sniffer:        newSniffer(int64(def.Nodes), peerIdx),
+	}
+
+	dAlea := alea.Definition[core.Duty, [32]byte]{
+
+		// GetLeader returns the deterministic leader index.
+		GetLeader: func(duty core.Duty, round int64) int64 {
+			return leader(duty, round, len(c.peers))+1
+		},
+
+		Decide: func(ctx context.Context, duty core.Duty, result [32]byte) {
+
+			defer endCtxSpan(ctx) // End the parent tracing span when decided
+
+			anyValue,err := t.getValue(result)
+			if err != nil {
+				log.Error(ctx, "Invalid value hash", err)
+				return
+			}
+			value,err := anyValue.UnmarshalNew()
+			if err != nil {
+				log.Error(ctx, "Invalid any value", err)
+				return
+			}
+	
+			decided = true
+			// decidedRoundsGauge.WithLabelValues(duty.Type.String(), string(roundTimer.Type())).Set(float64(qcommit[0].Round()))
+			inst.decidedAtCh <- time.Now()
+			for _, sub := range c.subscribers() {
+				if err := sub(ctx, duty, value); err != nil {
+					log.Warn(ctx, "Subscriber error", err)
+				}
+			}
+		},
+
+		Nodes: len(c.peers),
 	}
 
 	// Provide sniffed buffer to snifferFunc at the end.
@@ -836,10 +843,12 @@ func (c *Component) handleVCBC(ctx context.Context, _ peer.ID, req proto.Message
 
 	pbMsg, ok := req.(*pbv1.VCBCMsg)
 	if !ok || pbMsg == nil {
+		log.Debug(ctx,"HEREEeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeEEE")
 		return nil, false, errors.New("invalid consensus message")
 	}
 
 	if err := verifyVCBCMsg(pbMsg, c.pubkeys); err != nil {
+		log.Debug(ctx,"HEREEeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeEEE")
 		return nil, false, err
 	}
 
@@ -847,10 +856,12 @@ func (c *Component) handleVCBC(ctx context.Context, _ peer.ID, req proto.Message
 	ctx = log.WithCtx(ctx, z.Any("duty", duty))
 
 	if !c.gaterFunc(duty) {
+		log.Debug(ctx,"HEREEeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeEEE")
 		return nil, false, errors.New("invalid duty", z.Any("duty", duty))
 	}
 
 	if ctx.Err() != nil {
+		log.Debug(ctx,"HEREEeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeEEE")
 		return nil, false, errors.Wrap(ctx.Err(), "receive cancelled during verification",
 			z.Any("duty", duty),
 			z.Any("after", time.Since(t0)),
@@ -858,11 +869,27 @@ func (c *Component) handleVCBC(ctx context.Context, _ peer.ID, req proto.Message
 	}
 
 	if !c.deadliner.Add(duty) {
+		log.Debug(ctx,"HEREEeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeEEE")
 		return nil, false, errors.New("duty expired", z.Any("duty", duty), c.dropFilter)
+	}
+
+	var myId int
+
+	for i, p := range c.peers {
+		if c.tcpNode.ID() == p.ID {
+			myId = i
+		}
+	}
+
+	if vcbc.MsgType(pbMsg.Content.Type) == vcbc.MsgFinal {
+		log.Debug(ctx, "receiving final from", z.Any("from node",pbMsg.Source-1), z.Any("my node", myId))
 	}
 
 	select {
 	case c.getRecvBufferVCBC(duty) <- pbMsg:
+		if vcbc.MsgType(pbMsg.Content.Type) == vcbc.MsgFinal {
+			log.Debug(ctx, "received final from", z.Any("from node",pbMsg.Source-1), z.Any("my node", myId))
+		}
 		return nil, false, nil
 	case <-ctx.Done():
 		return nil, false, errors.Wrap(ctx.Err(), "timeout enqueuing receive buffer",

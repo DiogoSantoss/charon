@@ -4,6 +4,7 @@ package consensus
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sync"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/obolnetwork/charon/app/errors"
+	"github.com/obolnetwork/charon/app/log"
+	"github.com/obolnetwork/charon/app/z"
 	"github.com/obolnetwork/charon/core"
 	"github.com/obolnetwork/charon/core/alea/aba"
 	"github.com/obolnetwork/charon/core/alea/commoncoin"
@@ -50,6 +53,12 @@ func (t *transport) setValues(msg msg) {
 	}
 }
 
+func (t *transport) setValuesVCBC(value *anypb.Any, hash [32]byte) {
+	t.valueMu.Lock()
+	defer t.valueMu.Unlock()
+	t.values[hash] = value
+}
+
 // getValue returns the value by its hash.
 func (t *transport) getValue(hash [32]byte) (*anypb.Any, error) {
 	t.valueMu.Lock()
@@ -67,7 +76,6 @@ func (t *transport) getValue(hash [32]byte) (*anypb.Any, error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "wrap any value")
 		}
-
 		t.values[valueHash] = anyValue
 	default:
 		// No new values
@@ -75,6 +83,7 @@ func (t *transport) getValue(hash [32]byte) (*anypb.Any, error) {
 
 	pb, ok := t.values[hash]
 	if !ok {
+		fmt.Println(hash)
 		return nil, errors.New("unknown value")
 	}
 
@@ -218,6 +227,14 @@ func (t *transport) BroadcastABA(ctx context.Context, msg aba.ABAMessage[core.Du
 
 func (t *transport) BroadcastVCBC(ctx context.Context, msg vcbc.VCBCMessage[core.Duty, [32]byte]) error {
 
+	if msg.Content.MsgType == vcbc.MsgFinal {
+		value, err := t.getValue(msg.Value)
+		if err != nil {
+			return err
+		}
+		msg.RealValue = value
+	}
+
 	// Send to self (async since buffer is blocking).
 	go func() {
 		select {
@@ -227,20 +244,16 @@ func (t *transport) BroadcastVCBC(ctx context.Context, msg vcbc.VCBCMessage[core
 		}
 	}()
 
-	for _, p := range t.component.peers {
+	for i, p := range t.component.peers {
 		if p.ID == t.component.tcpNode.ID() {
 			// Do not broadcast to self
 			continue
 		}
 
-		var content *pbv1.VCBCMsgContent
-
-		if !reflect.ValueOf(msg.Content).IsZero() {
-			content = &pbv1.VCBCMsgContent{
-				Type:      int64(msg.Content.MsgType),
-				Tag:       msg.Content.Tag,
-				ValueHash: msg.Content.ValueHash,
-			}
+		content := &pbv1.VCBCMsgContent{
+			Type:      int64(msg.Content.MsgType),
+			Tag:       msg.Content.Tag,
+			ValueHash: msg.Content.ValueHash,
 		}
 
 		err := t.component.sender.SendAsync(ctx, t.component.tcpNode, "/charon/consensus/aleabft/vcbc/0.1.0", p.ID, &pbv1.VCBCMsg{
@@ -250,9 +263,14 @@ func (t *transport) BroadcastVCBC(ctx context.Context, msg vcbc.VCBCMessage[core
 			Value:        msg.Value[:],
 			PartialSig:   msg.PartialSig[:],
 			ThresholdSig: msg.ThresholdSig[:],
+			RealValue:    msg.RealValue,
 		})
 		if err != nil {
 			return err
+		}
+
+		if vcbc.MsgType(content.Type) == vcbc.MsgFinal {
+			log.Debug(ctx, "sending final to", z.Any("to node", i))
 		}
 	}
 
@@ -260,6 +278,14 @@ func (t *transport) BroadcastVCBC(ctx context.Context, msg vcbc.VCBCMessage[core
 }
 
 func (t *transport) UnicastVCBC(ctx context.Context, target int64, msg vcbc.VCBCMessage[core.Duty, [32]byte]) error {
+
+	if msg.Content.MsgType == vcbc.MsgAnswer {
+		value, err := t.getValue(msg.Value)
+		if err != nil {
+			return err
+		}
+		msg.RealValue = value
+	}
 
 	id, _ := t.component.getPeerIdx()
 	if id == (target - 1) {
@@ -292,6 +318,7 @@ func (t *transport) UnicastVCBC(ctx context.Context, target int64, msg vcbc.VCBC
 			Value:        msg.Value[:],
 			PartialSig:   msg.PartialSig[:],
 			ThresholdSig: msg.ThresholdSig[:],
+			RealValue:    msg.RealValue,
 		})
 		if err != nil {
 			return err
@@ -333,7 +360,13 @@ func (t *transport) ProcessReceivesCoin(ctx context.Context, outerBuffer chan *p
 				AbaRound:       msg.AbaRound,
 				Sig:            tbls.Signature(msg.GetSig()),
 			}
-			t.recvBufferCoin <- newCommonCoinMsg
+			// TODO Why another select
+			select {
+			case <-ctx.Done():
+				return
+			case t.recvBufferCoin <- newCommonCoinMsg:
+			}
+
 		}
 	}
 }
@@ -357,8 +390,13 @@ func (t *transport) ProcessReceivesABA(ctx context.Context, outerBuffer chan *pb
 				Estimative:     byte(msg.Estimative),
 				Values:         values,
 			}
+			// TODO Why another select
+			select {
+			case <-ctx.Done():
+				return
+			case t.recvBufferABA <- newABAMsg:
+			}
 
-			t.recvBufferABA <- newABAMsg
 		}
 	}
 }
@@ -369,13 +407,15 @@ func (t *transport) ProcessReceivesVCBC(ctx context.Context, outerBuffer chan *p
 		case <-ctx.Done():
 			return
 		case msg := <-outerBuffer:
-			var content vcbc.VCBCMessageContent
-			if msg.Content != nil {
-				content = vcbc.VCBCMessageContent{
-					MsgType:   vcbc.MsgType(msg.Content.GetType()),
-					Tag:       msg.Content.GetTag(),
-					ValueHash: msg.Content.GetValueHash(),
-				}
+
+			if vcbc.MsgType(msg.Content.Type) == vcbc.MsgFinal || vcbc.MsgType(msg.Content.Type) == vcbc.MsgAnswer {
+				t.setValuesVCBC(msg.RealValue, [32]byte(msg.Value))
+			}
+
+			content := vcbc.VCBCMessageContent{
+				MsgType:   vcbc.MsgType(msg.Content.GetType()),
+				Tag:       msg.Content.GetTag(),
+				ValueHash: msg.Content.GetValueHash(),
 			}
 
 			newVCBCMsg := vcbc.VCBCMessage[core.Duty, [32]byte]{
@@ -386,7 +426,17 @@ func (t *transport) ProcessReceivesVCBC(ctx context.Context, outerBuffer chan *p
 				PartialSig:   tbls.Signature(msg.PartialSig),
 				ThresholdSig: tbls.Signature(msg.ThresholdSig),
 			}
-			t.recvBufferVCBC <- newVCBCMsg
+
+			// handler -> inst buffer -> process -> trans buffer -> consensus
+			if vcbc.MsgType(msg.Content.Type) == vcbc.MsgFinal {
+				log.Debug(ctx, "from inst buffer to trans buffer", z.Any("from node",msg.Source-1))
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case t.recvBufferVCBC <- newVCBCMsg:
+			}
 		}
 	}
 }

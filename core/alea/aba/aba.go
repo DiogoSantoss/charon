@@ -284,7 +284,7 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 				return msg.Estimative, nil
 
 			case UponWeakSupportInit: // Algorithm 1:5
-				//log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
+				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
 				msg.Source = process
 				err := t.Broadcast(ctx, msg)
 				if err != nil {

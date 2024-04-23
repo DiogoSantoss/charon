@@ -151,6 +151,9 @@ func (s *Sender) SendAsync(parent context.Context, tcpNode host.Host, protoID pr
 		err := withRelayRetry(func() error {
 			return Send(ctx, tcpNode, protoID, peerID, msg, opts...)
 		})
+		if err != nil {
+			log.Error(ctx, "P2P send failed", err, z.Str("peer", PeerName(peerID)))
+		}
 		s.addResult(ctx, peerID, err)
 	}()
 

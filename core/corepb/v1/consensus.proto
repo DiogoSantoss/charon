@@ -67,6 +67,7 @@ message VCBCMsg {
   bytes                value            = 4;
   bytes                partialSig       = 5;
   bytes                thresholdSig     = 6;
+  optional google.protobuf.Any  realValue = 7;
 }
 
 message ABAMsg {
@@ -77,4 +78,8 @@ message ABAMsg {
   int64                 round           = 5;
   int32                 estimative      = 6;
   repeated int32        values          = 7;
+}
+
+message AleaResult {
+  bytes value = 1;
 }
