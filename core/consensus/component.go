@@ -843,12 +843,10 @@ func (c *Component) handleVCBC(ctx context.Context, _ peer.ID, req proto.Message
 
 	pbMsg, ok := req.(*pbv1.VCBCMsg)
 	if !ok || pbMsg == nil {
-		log.Debug(ctx,"HEREEeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeEEE")
 		return nil, false, errors.New("invalid consensus message")
 	}
 
 	if err := verifyVCBCMsg(pbMsg, c.pubkeys); err != nil {
-		log.Debug(ctx,"HEREEeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeEEE")
 		return nil, false, err
 	}
 
@@ -856,12 +854,10 @@ func (c *Component) handleVCBC(ctx context.Context, _ peer.ID, req proto.Message
 	ctx = log.WithCtx(ctx, z.Any("duty", duty))
 
 	if !c.gaterFunc(duty) {
-		log.Debug(ctx,"HEREEeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeEEE")
 		return nil, false, errors.New("invalid duty", z.Any("duty", duty))
 	}
 
 	if ctx.Err() != nil {
-		log.Debug(ctx,"HEREEeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeEEE")
 		return nil, false, errors.Wrap(ctx.Err(), "receive cancelled during verification",
 			z.Any("duty", duty),
 			z.Any("after", time.Since(t0)),
@@ -869,27 +865,26 @@ func (c *Component) handleVCBC(ctx context.Context, _ peer.ID, req proto.Message
 	}
 
 	if !c.deadliner.Add(duty) {
-		log.Debug(ctx,"HEREEeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeEEE")
 		return nil, false, errors.New("duty expired", z.Any("duty", duty), c.dropFilter)
 	}
 
-	var myId int
-
-	for i, p := range c.peers {
-		if c.tcpNode.ID() == p.ID {
-			myId = i
-		}
-	}
-
-	if vcbc.MsgType(pbMsg.Content.Type) == vcbc.MsgFinal {
-		log.Debug(ctx, "receiving final from", z.Any("from node",pbMsg.Source-1), z.Any("my node", myId))
-	}
+	// DEBUG
+	//var myId int
+	//for i, p := range c.peers {
+	//	if c.tcpNode.ID() == p.ID {
+	//		myId = i
+	//	}
+	//}
+	//if vcbc.MsgType(pbMsg.Content.Type) == vcbc.MsgFinal {
+	//	log.Debug(ctx, "receiving final from", z.Any("from node",pbMsg.Source-1), z.Any("my node", myId))
+	//}
 
 	select {
 	case c.getRecvBufferVCBC(duty) <- pbMsg:
-		if vcbc.MsgType(pbMsg.Content.Type) == vcbc.MsgFinal {
-			log.Debug(ctx, "received final from", z.Any("from node",pbMsg.Source-1), z.Any("my node", myId))
-		}
+		// DEBUG
+		//if vcbc.MsgType(pbMsg.Content.Type) == vcbc.MsgFinal {
+		//	log.Debug(ctx, "received final from", z.Any("from node",pbMsg.Source-1), z.Any("my node", myId))
+		//}
 		return nil, false, nil
 	case <-ctx.Done():
 		return nil, false, errors.Wrap(ctx.Err(), "timeout enqueuing receive buffer",

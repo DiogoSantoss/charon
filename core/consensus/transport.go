@@ -15,8 +15,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/obolnetwork/charon/app/errors"
-	"github.com/obolnetwork/charon/app/log"
-	"github.com/obolnetwork/charon/app/z"
 	"github.com/obolnetwork/charon/core"
 	"github.com/obolnetwork/charon/core/alea/aba"
 	"github.com/obolnetwork/charon/core/alea/commoncoin"
@@ -244,7 +242,7 @@ func (t *transport) BroadcastVCBC(ctx context.Context, msg vcbc.VCBCMessage[core
 		}
 	}()
 
-	for i, p := range t.component.peers {
+	for _, p := range t.component.peers {
 		if p.ID == t.component.tcpNode.ID() {
 			// Do not broadcast to self
 			continue
@@ -269,9 +267,10 @@ func (t *transport) BroadcastVCBC(ctx context.Context, msg vcbc.VCBCMessage[core
 			return err
 		}
 
-		if vcbc.MsgType(content.Type) == vcbc.MsgFinal {
-			log.Debug(ctx, "sending final to", z.Any("to node", i))
-		}
+		// DEBUG
+		//if vcbc.MsgType(content.Type) == vcbc.MsgFinal {
+		//	log.Debug(ctx, "sending final to", z.Any("to node", i))
+		//}
 	}
 
 	return nil
@@ -427,10 +426,11 @@ func (t *transport) ProcessReceivesVCBC(ctx context.Context, outerBuffer chan *p
 				ThresholdSig: tbls.Signature(msg.ThresholdSig),
 			}
 
+			// DEBUG
 			// handler -> inst buffer -> process -> trans buffer -> consensus
-			if vcbc.MsgType(msg.Content.Type) == vcbc.MsgFinal {
-				log.Debug(ctx, "from inst buffer to trans buffer", z.Any("from node",msg.Source-1))
-			}
+			//if vcbc.MsgType(msg.Content.Type) == vcbc.MsgFinal {
+			//	log.Debug(ctx, "from inst buffer to trans buffer", z.Any("from node",msg.Source-1))
+			//}
 
 			select {
 			case <-ctx.Done():
