@@ -207,6 +207,7 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 		if err != nil {
 			return err
 		}
+		log.Debug(ctx, "VCBC sent value", z.I64("id", process), z.Str("tag", myTag))
 	}
 
 	for {
@@ -291,8 +292,14 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 				}
 			case UponFinal:
 
+				value,ok := messageByTag[msg.Content.Tag]
+				if !ok {
+					log.Debug(ctx, "Node id received final before send", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
+					continue
+				}
+
 				// Verify if final signature matches message content
-				hash := d.HashValue(messageByTag[msg.Content.Tag])
+				hash := d.HashValue(value)
 
 				content := VCBCMessageContent{
 					MsgType:   MsgReady,
