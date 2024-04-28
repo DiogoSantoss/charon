@@ -307,6 +307,7 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 				err = d.VerifyAggregateSignature(encodedContent, msg.ThresholdSig)
 				if err != nil {
 					log.Debug(ctx, "Node id received invalid final signature from source", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
+					log.Debug(ctx, "", z.Any("message", messageByTag[msg.Content.Tag]))
 					log.Debug(ctx, "", z.Any("content", content))
 					log.Debug(ctx, "", z.Any("enconded", encodedContent))
 					log.Debug(ctx, "", z.Any("sig", msg.ThresholdSig))

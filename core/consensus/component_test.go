@@ -13,7 +13,6 @@ import (
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/stretchr/testify/require"
 
@@ -135,7 +134,9 @@ func testComponent(t *testing.T, threshold, nodes int) {
 			if i == j {
 				continue
 			}
-			hosts[i].Peerstore().AddAddrs(hostsInfo[j].ID, hostsInfo[j].Addrs, peerstore.PermanentAddrTTL)
+			//hosts[i].Peerstore().AddAddrs(hostsInfo[j].ID, hostsInfo[j].Addrs, peerstore.PermanentAddrTTL)
+			err := hosts[i].Connect(ctx, hostsInfo[j])
+			require.NoError(t, err)
 		}
 
 		sniffer := func(msgs *pbv1.SniffedConsensusInstance) {

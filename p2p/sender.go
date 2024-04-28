@@ -4,6 +4,7 @@ package p2p
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -148,6 +149,12 @@ func (s *Sender) SendAsync(parent context.Context, tcpNode host.Host, protoID pr
 		// Clone the context since parent context may be closed soon.
 		ctx := log.CopyFields(context.Background(), parent)
 
+		//err := withHandshakeRetry(func() error {
+		//	return withRelayRetry(func() error {
+		//		return Send(ctx, tcpNode, protoID, peerID, msg, opts...)
+		//	})
+		//})
+
 		err := withRelayRetry(func() error {
 			return Send(ctx, tcpNode, protoID, peerID, msg, opts...)
 		})
@@ -180,6 +187,16 @@ func withRelayRetry(fn func() error) error {
 	err := fn()
 	if IsRelayError(err) { // Retry once if relay error
 		time.Sleep(time.Millisecond * 100)
+		err = fn()
+	}
+
+	return err
+}
+
+func withHandshakeRetry(fn func() error) error {
+	err := fn()
+	if IsHandshakeError(err) { // Retry with jitter delay
+		time.Sleep(time.Millisecond * time.Duration(rand.Intn(100)))
 		err = fn()
 	}
 
