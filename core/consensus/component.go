@@ -211,7 +211,7 @@ func (io instanceIO) MaybeStart() bool {
 // New returns a new consensus QBFT component.
 func New(tcpNode host.Host, sender *p2p.Sender, peers []p2p.Peer, p2pKey *k1.PrivateKey,
 	deadliner core.Deadliner, gaterFunc core.DutyGaterFunc, snifferFunc func(*pbv1.SniffedConsensusInstance),
-	aleaBLSPrivKey tbls.PrivateKey, aleaBLSFullKey tbls.PublicKey, aleaBLSPubKeys map[int64]tbls.PublicKey, 
+	aleaBLSPrivKey tbls.PrivateKey, aleaBLSFullKey tbls.PublicKey, aleaBLSPubKeys map[int64]tbls.PublicKey,
 ) (*Component, error) {
 	// Extract peer pubkeys.
 	keys := make(map[int64]*k1.PublicKey)
@@ -228,17 +228,17 @@ func New(tcpNode host.Host, sender *p2p.Sender, peers []p2p.Peer, p2pKey *k1.Pri
 	}
 
 	c := &Component{
-		tcpNode:     tcpNode,
-		sender:      sender,
-		peers:       peers,
-		peerLabels:  labels,
-		privkey:     p2pKey,
-		pubkeys:     keys,
-		deadliner:   deadliner,
-		snifferFunc: snifferFunc,
-		gaterFunc:   gaterFunc,
-		dropFilter:  log.Filter(),
-		timerFunc:   getTimerFunc(),
+		tcpNode:        tcpNode,
+		sender:         sender,
+		peers:          peers,
+		peerLabels:     labels,
+		privkey:        p2pKey,
+		pubkeys:        keys,
+		deadliner:      deadliner,
+		snifferFunc:    snifferFunc,
+		gaterFunc:      gaterFunc,
+		dropFilter:     log.Filter(),
+		timerFunc:      getTimerFunc(),
 		aleaBLSPrivKey: aleaBLSPrivKey,
 		aleaBLSFullKey: aleaBLSFullKey,
 		aleaBLSPubKeys: aleaBLSPubKeys,
@@ -479,35 +479,32 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 	def := newDefinition(len(c.peers), c.subscribers, roundTimer, decideCallback)
 
 	// ============= TMP =============
-	// Read BLS keys from disk
+	// Read BLS keys from disk or from test config
 	var (
-		path = "/compose/"
+		path         = "/compose/"
 		privKeyShare tbls.PrivateKey
-		pubKey tbls.PublicKey
+		pubKey       tbls.PublicKey
 		pubKeyShares map[int64]tbls.PublicKey
 	)
 
+	if c.aleaBLSFullKey == (tbls.PublicKey{}) {
 
-	privKeyShareBytes, _ := os.ReadFile(path + fmt.Sprintf("bls_share_private_%d", peerIdx+1))
-
-	if len(privKeyShareBytes) == 0 {
-
-		privKeyShare = c.aleaBLSPrivKey
-		pubKey = c.aleaBLSFullKey
-		pubKeyShares = c.aleaBLSPubKeys
-
-	} else {
+		privKeyShareBytes, _ := os.ReadFile(path + fmt.Sprintf("bls_share_private_%d", peerIdx+1))
 
 		privKeyShare = tbls.PrivateKey(privKeyShareBytes)
-	
+
 		pubKeyBytes, _ := os.ReadFile(path + "bls_full_public")
 		pubKey = tbls.PublicKey(pubKeyBytes)
-	
+
 		pubKeyShares = make(map[int64]tbls.PublicKey)
 		for i := 1; i <= 4; i++ {
 			pubKeyShareBytes, _ := os.ReadFile(path + fmt.Sprintf("bls_share_public_%d", i))
 			pubKeyShares[int64(i)] = tbls.PublicKey(pubKeyShareBytes)
 		}
+	} else {
+		privKeyShare = c.aleaBLSPrivKey
+		pubKey = c.aleaBLSFullKey
+		pubKeyShares = c.aleaBLSPubKeys
 	}
 
 	// ============= TMP =============
@@ -600,24 +597,24 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 
 		// GetLeader returns the deterministic leader index.
 		GetLeader: func(duty core.Duty, round int64) int64 {
-			return leader(duty, round, len(c.peers))+1
+			return leader(duty, round, len(c.peers)) + 1
 		},
 
 		Decide: func(ctx context.Context, duty core.Duty, result [32]byte) {
 
 			defer endCtxSpan(ctx) // End the parent tracing span when decided
 
-			anyValue,err := t.getValue(result)
+			anyValue, err := t.getValue(result)
 			if err != nil {
 				log.Error(ctx, "Invalid value hash", err)
 				return
 			}
-			value,err := anyValue.UnmarshalNew()
+			value, err := anyValue.UnmarshalNew()
 			if err != nil {
 				log.Error(ctx, "Invalid any value", err)
 				return
 			}
-	
+
 			decided = true
 			// decidedRoundsGauge.WithLabelValues(duty.Type.String(), string(roundTimer.Type())).Set(float64(qcommit[0].Round()))
 			inst.decidedAtCh <- time.Now()
@@ -681,7 +678,7 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 			return err // Only return non-context errors.
 		}
 	}
-	
+
 	if !decided {
 		consensusTimeout.WithLabelValues(duty.Type.String(), string(roundTimer.Type())).Inc()
 

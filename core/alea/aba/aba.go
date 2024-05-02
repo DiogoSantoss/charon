@@ -268,7 +268,7 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 			switch rule {
 			case UponWeakSupportFinish: // Algorithm 1:1
 				if !alreadyBroadcastedFinish {
-					//log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
+					log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
 
 					alreadyBroadcastedFinish = true
 					msg.Source = process
@@ -280,7 +280,6 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 
 			case UponStrongSupportFinish: // Algorithm 1:2
 				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
-				//log.Debug(ctx, "ABA result", z.I64("id", process), z.I64("agreementRound", msg.AgreementRound), z.I64("abaRound", msg.Round), z.U8("result", msg.Estimative))
 				return msg.Estimative, nil
 
 			case UponWeakSupportInit: // Algorithm 1:5
