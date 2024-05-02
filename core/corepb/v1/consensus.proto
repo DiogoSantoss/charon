@@ -45,3 +45,41 @@ message SniffedConsensusInstances {
   repeated SniffedConsensusInstance instances = 1;
   string git_hash = 2;
 }
+
+message CommonCoinMsg {
+  int64                 source          = 1;
+  core.corepb.v1.Duty   duty            = 2;
+  int64                 agreementRound  = 3;
+  int64                 abaRound        = 4;
+  bytes                 sig             = 5;
+}
+
+message VCBCMsgContent {
+  int64                 type           = 1;
+  string                tag            = 2;
+  bytes                 valueHash      = 3;
+}
+
+message VCBCMsg {
+  int64                source           = 1;
+  core.corepb.v1.Duty  duty             = 2;
+  VCBCMsgContent       content          = 3;
+  bytes                value            = 4;
+  bytes                partialSig       = 5;
+  bytes                thresholdSig     = 6;
+  optional google.protobuf.Any  realValue = 7;
+}
+
+message ABAMsg {
+  int64                 type            = 1;
+  int64                 source          = 2;
+  core.corepb.v1.Duty   duty            = 3;
+  int64                 agreementRound  = 4;
+  int64                 round           = 5;
+  int32                 estimative      = 6;
+  repeated int32        values          = 7;
+}
+
+message AleaResult {
+  bytes value = 1;
+}

@@ -5,6 +5,7 @@ package p2p
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
@@ -130,6 +131,16 @@ func pingPeerOnce(ctx context.Context, svc *ping.PingService, p peer.ID,
 func IsRelayError(err error) bool {
 	return errors.Is(err, network.ErrReset) ||
 		errors.Is(err, network.ErrResourceScopeClosed)
+}
+
+// IsHandshakeError returns true if the error is due to unexpected handshake message.
+func IsHandshakeError(err error) bool {
+	if err != nil {
+		return strings.Contains(err.Error(), "unexpected handshake message")
+		//return strings.Contains(err.Error(), "")
+	} else {
+		return false
+	}
 }
 
 // newPingLogger returns stateful logging function that logs "real" dial errors when they change or every 10min.

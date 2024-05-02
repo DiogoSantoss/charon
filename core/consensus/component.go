@@ -4,7 +4,10 @@ package consensus
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,9 +25,14 @@ import (
 	"github.com/obolnetwork/charon/app/log"
 	"github.com/obolnetwork/charon/app/z"
 	"github.com/obolnetwork/charon/core"
+	"github.com/obolnetwork/charon/core/alea"
+	"github.com/obolnetwork/charon/core/alea/aba"
+	"github.com/obolnetwork/charon/core/alea/commoncoin"
+	"github.com/obolnetwork/charon/core/alea/vcbc"
 	pbv1 "github.com/obolnetwork/charon/core/corepb/v1"
 	"github.com/obolnetwork/charon/core/qbft"
 	"github.com/obolnetwork/charon/p2p"
+	"github.com/obolnetwork/charon/tbls"
 )
 
 const (
@@ -137,6 +145,10 @@ func newInstanceIO() instanceIO {
 		valueCh:      make(chan proto.Message, 1),
 		errCh:        make(chan error, 1),
 		decidedAtCh:  make(chan time.Time, 1),
+
+		recvBufferCoin: make(chan *pbv1.CommonCoinMsg, recvBuffer),
+		recvBufferVCBC: make(chan *pbv1.VCBCMsg, recvBuffer),
+		recvBufferABA:  make(chan *pbv1.ABAMsg, recvBuffer),
 	}
 }
 
@@ -151,6 +163,10 @@ type instanceIO struct {
 	valueCh      chan proto.Message // Async input value channel.
 	errCh        chan error         // Async output error channel.
 	decidedAtCh  chan time.Time     // Async output decided timestamp channel.
+
+	recvBufferCoin chan *pbv1.CommonCoinMsg
+	recvBufferVCBC chan *pbv1.VCBCMsg
+	recvBufferABA  chan *pbv1.ABAMsg
 }
 
 // MarkParticipated marks the instance as participated.
@@ -195,6 +211,7 @@ func (io instanceIO) MaybeStart() bool {
 // New returns a new consensus QBFT component.
 func New(tcpNode host.Host, sender *p2p.Sender, peers []p2p.Peer, p2pKey *k1.PrivateKey,
 	deadliner core.Deadliner, gaterFunc core.DutyGaterFunc, snifferFunc func(*pbv1.SniffedConsensusInstance),
+	aleaBLSPrivKey tbls.PrivateKey, aleaBLSFullKey tbls.PublicKey, aleaBLSPubKeys map[int64]tbls.PublicKey,
 ) (*Component, error) {
 	// Extract peer pubkeys.
 	keys := make(map[int64]*k1.PublicKey)
@@ -211,17 +228,20 @@ func New(tcpNode host.Host, sender *p2p.Sender, peers []p2p.Peer, p2pKey *k1.Pri
 	}
 
 	c := &Component{
-		tcpNode:     tcpNode,
-		sender:      sender,
-		peers:       peers,
-		peerLabels:  labels,
-		privkey:     p2pKey,
-		pubkeys:     keys,
-		deadliner:   deadliner,
-		snifferFunc: snifferFunc,
-		gaterFunc:   gaterFunc,
-		dropFilter:  log.Filter(),
-		timerFunc:   getTimerFunc(),
+		tcpNode:        tcpNode,
+		sender:         sender,
+		peers:          peers,
+		peerLabels:     labels,
+		privkey:        p2pKey,
+		pubkeys:        keys,
+		deadliner:      deadliner,
+		snifferFunc:    snifferFunc,
+		gaterFunc:      gaterFunc,
+		dropFilter:     log.Filter(),
+		timerFunc:      getTimerFunc(),
+		aleaBLSPrivKey: aleaBLSPrivKey,
+		aleaBLSFullKey: aleaBLSFullKey,
+		aleaBLSPubKeys: aleaBLSPubKeys,
 	}
 	c.mutable.instances = make(map[core.Duty]instanceIO)
 
@@ -243,6 +263,10 @@ type Component struct {
 	gaterFunc   core.DutyGaterFunc
 	dropFilter  z.Field // Filter buffer overflow errors (possible DDoS)
 	timerFunc   timerFunc
+
+	aleaBLSPrivKey tbls.PrivateKey
+	aleaBLSFullKey tbls.PublicKey
+	aleaBLSPubKeys map[int64]tbls.PublicKey
 
 	// Mutable state
 	mutable struct {
@@ -292,6 +316,18 @@ func (c *Component) Start(ctx context.Context) {
 	p2p.RegisterHandler("qbft", c.tcpNode, protocolID2,
 		func() proto.Message { return new(pbv1.ConsensusMsg) },
 		c.handle)
+
+	p2p.RegisterHandler("coin", c.tcpNode, "/charon/consensus/aleabft/commoncoin/0.1.0",
+		func() proto.Message { return new(pbv1.CommonCoinMsg) },
+		c.handleCoin)
+
+	p2p.RegisterHandler("aba", c.tcpNode, "/charon/consensus/aleabft/aba/0.1.0",
+		func() proto.Message { return new(pbv1.ABAMsg) },
+		c.handleABA)
+
+	p2p.RegisterHandler("vcbc", c.tcpNode, "/charon/consensus/aleabft/vcbc/0.1.0",
+		func() proto.Message { return new(pbv1.VCBCMsg) },
+		c.handleVCBC)
 
 	go func() {
 		for {
@@ -442,13 +478,154 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 	// Create a new qbft definition for this instance.
 	def := newDefinition(len(c.peers), c.subscribers, roundTimer, decideCallback)
 
+	// ============= TMP =============
+	// Read BLS keys from disk or from test config
+	var (
+		path         = "/compose/"
+		privKeyShare tbls.PrivateKey
+		pubKey       tbls.PublicKey
+		pubKeyShares map[int64]tbls.PublicKey
+	)
+
+	if c.aleaBLSFullKey == (tbls.PublicKey{}) {
+
+		privKeyShareBytes, _ := os.ReadFile(path + fmt.Sprintf("bls_share_private_%d", peerIdx+1))
+
+		privKeyShare = tbls.PrivateKey(privKeyShareBytes)
+
+		pubKeyBytes, _ := os.ReadFile(path + "bls_full_public")
+		pubKey = tbls.PublicKey(pubKeyBytes)
+
+		pubKeyShares = make(map[int64]tbls.PublicKey)
+		for i := 1; i <= 4; i++ {
+			pubKeyShareBytes, _ := os.ReadFile(path + fmt.Sprintf("bls_share_public_%d", i))
+			pubKeyShares[int64(i)] = tbls.PublicKey(pubKeyShareBytes)
+		}
+	} else {
+		privKeyShare = c.aleaBLSPrivKey
+		pubKey = c.aleaBLSFullKey
+		pubKeyShares = c.aleaBLSPubKeys
+	}
+
+	// ============= TMP =============
+
+	getCommonCoinName := func(instance core.Duty, agreementRound, abaRound int64) ([]byte, error) {
+		name := fmt.Sprintf("AleaCommonCoin%v%v%v", instance.String(), agreementRound, abaRound)
+		nonce := sha256.Sum256([]byte(name))
+		return nonce[:], nil
+	}
+
+	dCoin := commoncoin.Definition[core.Duty]{
+		GetCommonCoinName: getCommonCoinName,
+		GetCommonCoinNameSigned: func(instance core.Duty, agreementRound, abaRound int64) (tbls.Signature, error) {
+			name, err := getCommonCoinName(instance, agreementRound, abaRound)
+			if err != nil {
+				return tbls.Signature{}, err
+			}
+			return tbls.Sign(privKeyShare, name)
+		},
+		GetCommonCoinResult: func(ctx context.Context, instance core.Duty, agreementRound, abaRound int64, signatures map[int]tbls.Signature) (byte, error) {
+			totalSig, err := tbls.ThresholdAggregate(signatures)
+			if err != nil {
+				return 0, err
+			}
+
+			sid, err := getCommonCoinName(instance, agreementRound, abaRound)
+			if err != nil {
+				return 0, err
+			}
+
+			err = tbls.Verify(pubKey, sid, totalSig)
+			if err != nil {
+				log.Error(ctx, "Failed to verify aggregate signature", err)
+				return 0, err
+			}
+
+			return totalSig[0] & 1, nil
+		},
+		VerifySignature: func(process int64, data []byte, signature tbls.Signature) error {
+			return tbls.Verify(pubKeyShares[process], data, signature)
+		},
+		Nodes: len(c.peers),
+	}
+
+	dABA := aba.Definition{
+		Nodes: len(c.peers),
+	}
+
+	hashFunction := sha256.New()
+	dVCBC := vcbc.Definition[core.Duty, [32]byte]{
+		BuildTag: func(instance core.Duty, process int64) string {
+			return "ID." + strconv.Itoa(int(process)) + "." + instance.String()
+		},
+		IdFromTag: func(tag string) int64 {
+			id, _ := strconv.Atoi(strings.Split(tag, ".")[1])
+			return int64(id)
+		},
+		HashValue: func(value [32]byte) []byte {
+			hashFunction.Write(value[:])
+			hash := hashFunction.Sum(nil)
+			hashFunction.Reset()
+			return hash
+		},
+		SignData: func(data []byte) (tbls.Signature, error) {
+			return tbls.Sign(privKeyShare, data)
+		},
+		VerifySignature: func(process int64, data []byte, signature tbls.Signature) error {
+			return tbls.Verify(pubKeyShares[process], data, signature)
+		},
+		VerifyAggregateSignature: func(data []byte, signature tbls.Signature) error {
+			return tbls.Verify(pubKey, data, signature)
+		},
+
+		Nodes: len(c.peers),
+	}
+
 	// Create a new transport that handles sending and receiving for this instance.
 	t := transport{
-		component:  c,
-		values:     make(map[[32]byte]*anypb.Any),
-		valueCh:    inst.valueCh,
-		recvBuffer: make(chan qbft.Msg[core.Duty, [32]byte]),
-		sniffer:    newSniffer(int64(def.Nodes), peerIdx),
+		component:      c,
+		values:         make(map[[32]byte]*anypb.Any),
+		valueCh:        inst.valueCh,
+		recvBuffer:     make(chan qbft.Msg[core.Duty, [32]byte]),
+		recvBufferCoin: make(chan commoncoin.CommonCoinMessage[core.Duty]),
+		recvBufferABA:  make(chan aba.ABAMessage[core.Duty]),
+		recvBufferVCBC: make(chan vcbc.VCBCMessage[core.Duty, [32]byte]),
+		sniffer:        newSniffer(int64(def.Nodes), peerIdx),
+	}
+
+	dAlea := alea.Definition[core.Duty, [32]byte]{
+
+		// GetLeader returns the deterministic leader index.
+		GetLeader: func(duty core.Duty, round int64) int64 {
+			return leader(duty, round, len(c.peers)) + 1
+		},
+
+		Decide: func(ctx context.Context, duty core.Duty, result [32]byte) {
+
+			defer endCtxSpan(ctx) // End the parent tracing span when decided
+
+			anyValue, err := t.getValue(result)
+			if err != nil {
+				log.Error(ctx, "Invalid value hash", err)
+				return
+			}
+			value, err := anyValue.UnmarshalNew()
+			if err != nil {
+				log.Error(ctx, "Invalid any value", err)
+				return
+			}
+
+			decided = true
+			// decidedRoundsGauge.WithLabelValues(duty.Type.String(), string(roundTimer.Type())).Set(float64(qcommit[0].Round()))
+			inst.decidedAtCh <- time.Now()
+			for _, sub := range c.subscribers() {
+				if err := sub(ctx, duty, value); err != nil {
+					log.Warn(ctx, "Subscriber error", err)
+				}
+			}
+		},
+
+		Nodes: len(c.peers),
 	}
 
 	// Provide sniffed buffer to snifferFunc at the end.
@@ -458,6 +635,9 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 
 	// Start a receiving goroutine.
 	go t.ProcessReceives(ctx, c.getRecvBuffer(duty))
+	go t.ProcessReceivesCoin(ctx, c.getRecvBufferCoin(duty))
+	go t.ProcessReceivesABA(ctx, c.getRecvBufferABA(duty))
+	go t.ProcessReceivesVCBC(ctx, c.getRecvBufferVCBC(duty))
 
 	// Create a qbft transport from the transport
 	qt := qbft.Transport[core.Duty, [32]byte]{
@@ -465,11 +645,38 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 		Receive:   t.recvBuffer,
 	}
 
-	// Run the algo, blocking until the context is cancelled.
-	err = qbft.Run[core.Duty, [32]byte](ctx, def, qt, duty, peerIdx, inst.hashCh)
-	if err != nil && !isContextErr(err) {
-		consensusError.Inc()
-		return err // Only return non-context errors.
+	tCoin := commoncoin.Transport[core.Duty]{
+		Broadcast: t.BroadcastCoin,
+		Receive:   t.recvBufferCoin,
+	}
+
+	tABA := aba.Transport[core.Duty]{
+		Broadcast: t.BroadcastABA,
+		Receive:   t.recvBufferABA,
+	}
+
+	tVCBC := vcbc.Transport[core.Duty, [32]byte]{
+		Broadcast: t.BroadcastVCBC,
+		Unicast:   t.UnicastVCBC,
+		Receive:   t.recvBufferVCBC,
+	}
+
+	testingAlea := true
+
+	if testingAlea {
+		// Run the algo, blocking until the context is cancelled.
+		err = alea.Run[core.Duty, [32]byte](ctx, dAlea, dVCBC, tVCBC, dABA, tABA, dCoin, tCoin, duty, peerIdx+1, inst.hashCh)
+		if err != nil && !isContextErr(err) {
+			consensusError.Inc()
+			return err // Only return non-context errors.
+		}
+	} else {
+		// Run the algo, blocking until the context is cancelled.
+		err = qbft.Run[core.Duty, [32]byte](ctx, def, qt, duty, peerIdx, inst.hashCh)
+		if err != nil && !isContextErr(err) {
+			consensusError.Inc()
+			return err // Only return non-context errors.
+		}
 	}
 
 	if !decided {
@@ -546,6 +753,142 @@ func (c *Component) handle(ctx context.Context, _ peer.ID, req proto.Message) (p
 	}
 }
 
+// 1. Handle proto.Message
+// 2. Verify message
+// 3. Verify duty
+// 4. Enqueue in component buffer
+func (c *Component) handleCoin(ctx context.Context, _ peer.ID, req proto.Message) (proto.Message, bool, error) {
+	t0 := time.Now()
+
+	pbMsg, ok := req.(*pbv1.CommonCoinMsg)
+	if !ok || pbMsg == nil {
+		return nil, false, errors.New("invalid consensus message")
+	}
+
+	if err := verifyCoinMsg(pbMsg, c.pubkeys); err != nil {
+		return nil, false, err
+	}
+
+	duty := core.DutyFromProto(pbMsg.Duty)
+	ctx = log.WithCtx(ctx, z.Any("duty", duty))
+
+	if !c.gaterFunc(duty) {
+		return nil, false, errors.New("invalid duty", z.Any("duty", duty))
+	}
+
+	if ctx.Err() != nil {
+		return nil, false, errors.Wrap(ctx.Err(), "receive cancelled during verification",
+			z.Any("duty", duty),
+			z.Any("after", time.Since(t0)),
+		)
+	}
+
+	if !c.deadliner.Add(duty) {
+		return nil, false, errors.New("duty expired", z.Any("duty", duty), c.dropFilter)
+	}
+
+	select {
+	case c.getRecvBufferCoin(duty) <- pbMsg:
+		return nil, false, nil
+	case <-ctx.Done():
+		return nil, false, errors.Wrap(ctx.Err(), "timeout enqueuing receive buffer",
+			z.Any("duty", duty), z.Any("after", time.Since(t0)))
+	}
+}
+
+func (c *Component) handleABA(ctx context.Context, _ peer.ID, req proto.Message) (proto.Message, bool, error) {
+	t0 := time.Now()
+
+	pbMsg, ok := req.(*pbv1.ABAMsg)
+	if !ok || pbMsg == nil {
+		return nil, false, errors.New("invalid consensus message")
+	}
+
+	if err := verifyABAMsg(pbMsg, c.pubkeys); err != nil {
+		return nil, false, err
+	}
+
+	duty := core.DutyFromProto(pbMsg.Duty)
+	ctx = log.WithCtx(ctx, z.Any("duty", duty))
+
+	if !c.gaterFunc(duty) {
+		return nil, false, errors.New("invalid duty", z.Any("duty", duty))
+	}
+
+	if ctx.Err() != nil {
+		return nil, false, errors.Wrap(ctx.Err(), "receive cancelled during verification",
+			z.Any("duty", duty),
+			z.Any("after", time.Since(t0)),
+		)
+	}
+
+	if !c.deadliner.Add(duty) {
+		return nil, false, errors.New("duty expired", z.Any("duty", duty), c.dropFilter)
+	}
+
+	select {
+	case c.getRecvBufferABA(duty) <- pbMsg:
+		return nil, false, nil
+	case <-ctx.Done():
+		return nil, false, errors.Wrap(ctx.Err(), "timeout enqueuing receive buffer",
+			z.Any("duty", duty), z.Any("after", time.Since(t0)))
+	}
+}
+
+func (c *Component) handleVCBC(ctx context.Context, _ peer.ID, req proto.Message) (proto.Message, bool, error) {
+	t0 := time.Now()
+
+	pbMsg, ok := req.(*pbv1.VCBCMsg)
+	if !ok || pbMsg == nil {
+		return nil, false, errors.New("invalid consensus message")
+	}
+
+	if err := verifyVCBCMsg(pbMsg, c.pubkeys); err != nil {
+		return nil, false, err
+	}
+
+	duty := core.DutyFromProto(pbMsg.Duty)
+	ctx = log.WithCtx(ctx, z.Any("duty", duty))
+
+	if !c.gaterFunc(duty) {
+		return nil, false, errors.New("invalid duty", z.Any("duty", duty))
+	}
+
+	if ctx.Err() != nil {
+		return nil, false, errors.Wrap(ctx.Err(), "receive cancelled during verification",
+			z.Any("duty", duty),
+			z.Any("after", time.Since(t0)),
+		)
+	}
+
+	if !c.deadliner.Add(duty) {
+		return nil, false, errors.New("duty expired", z.Any("duty", duty), c.dropFilter)
+	}
+
+	// DEBUG
+	//var myId int
+	//for i, p := range c.peers {
+	//	if c.tcpNode.ID() == p.ID {
+	//		myId = i
+	//	}
+	//}
+	//if vcbc.MsgType(pbMsg.Content.Type) == vcbc.MsgFinal {
+	//	log.Debug(ctx, "receiving final from", z.Any("from node",pbMsg.Source-1), z.Any("my node", myId))
+	//}
+
+	select {
+	case c.getRecvBufferVCBC(duty) <- pbMsg:
+		// DEBUG
+		//if vcbc.MsgType(pbMsg.Content.Type) == vcbc.MsgFinal {
+		//	log.Debug(ctx, "received final from", z.Any("from node",pbMsg.Source-1), z.Any("my node", myId))
+		//}
+		return nil, false, nil
+	case <-ctx.Done():
+		return nil, false, errors.Wrap(ctx.Err(), "timeout enqueuing receive buffer",
+			z.Any("duty", duty), z.Any("after", time.Since(t0)))
+	}
+}
+
 // getRecvBuffer returns a receive buffer for the duty.
 func (c *Component) getRecvBuffer(duty core.Duty) chan msg {
 	c.mutable.Lock()
@@ -558,6 +901,45 @@ func (c *Component) getRecvBuffer(duty core.Duty) chan msg {
 	}
 
 	return inst.recvBuffer
+}
+
+func (c *Component) getRecvBufferCoin(duty core.Duty) chan *pbv1.CommonCoinMsg {
+	c.mutable.Lock()
+	defer c.mutable.Unlock()
+
+	inst, ok := c.mutable.instances[duty]
+	if !ok {
+		inst = newInstanceIO()
+		c.mutable.instances[duty] = inst
+	}
+
+	return inst.recvBufferCoin
+}
+
+func (c *Component) getRecvBufferABA(duty core.Duty) chan *pbv1.ABAMsg {
+	c.mutable.Lock()
+	defer c.mutable.Unlock()
+
+	inst, ok := c.mutable.instances[duty]
+	if !ok {
+		inst = newInstanceIO()
+		c.mutable.instances[duty] = inst
+	}
+
+	return inst.recvBufferABA
+}
+
+func (c *Component) getRecvBufferVCBC(duty core.Duty) chan *pbv1.VCBCMsg {
+	c.mutable.Lock()
+	defer c.mutable.Unlock()
+
+	inst, ok := c.mutable.instances[duty]
+	if !ok {
+		inst = newInstanceIO()
+		c.mutable.instances[duty] = inst
+	}
+
+	return inst.recvBufferVCBC
 }
 
 // getInstanceIO returns the duty's instance and true if it were previously created.
@@ -630,6 +1012,19 @@ func verifyMsg(msg *pbv1.QBFTMsg, pubkeys map[int64]*k1.PublicKey) error {
 		return errors.New("invalid consensus message signature")
 	}
 
+	return nil
+}
+
+// TODO
+func verifyCoinMsg(msg *pbv1.CommonCoinMsg, pubKeys map[int64]*k1.PublicKey) error {
+	return nil
+}
+
+func verifyABAMsg(msg *pbv1.ABAMsg, pubKeys map[int64]*k1.PublicKey) error {
+	return nil
+}
+
+func verifyVCBCMsg(msg *pbv1.VCBCMsg, pubKeys map[int64]*k1.PublicKey) error {
 	return nil
 }
 

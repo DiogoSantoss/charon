@@ -46,7 +46,7 @@ const (
 //go:generate go test . -integration -v -run=TestSimnetDuties
 
 func TestSimnetDuties(t *testing.T) {
-	skipIfDisabled(t)
+	//skipIfDisabled(t)
 
 	tests := []struct {
 		name               string
@@ -190,6 +190,10 @@ type simnetArgs struct {
 	TekuRegistration   bool
 	SyntheticProposals bool
 	VoluntaryExit      bool
+
+	AleaBLSPrivKeys    map[int]tbls.PrivateKey
+	AleaBLSPubKeys	   map[int64]tbls.PublicKey
+	AleaBLSFullKey     tbls.PublicKey
 }
 
 // newSimnetArgs defines the default simnet test args.
@@ -211,6 +215,16 @@ func newSimnetArgs(t *testing.T) simnetArgs {
 		vapiAddrs = append(vapiAddrs, testutil.AvailableAddr(t).String())
 	}
 
+	secret, _ := tbls.GenerateSecretKey()
+	public, _ := tbls.SecretToPublicKey(secret)
+
+	// Generate private key shares and corresponding public keys
+	shares, _ := tbls.ThresholdSplit(secret, n, 1)
+	pubKeys := make(map[int64]tbls.PublicKey)
+	for i, share := range shares {
+		pubKeys[int64(i)], _ = tbls.SecretToPublicKey(share)
+	}
+
 	return simnetArgs{
 		N:          n,
 		VAPIAddrs:  vapiAddrs,
@@ -218,6 +232,9 @@ func newSimnetArgs(t *testing.T) simnetArgs {
 		SimnetKeys: secrets,
 		Lock:       lock,
 		ErrChan:    make(chan error, 1),
+		AleaBLSPrivKeys: shares,
+		AleaBLSPubKeys: pubKeys,
+		AleaBLSFullKey: public,
 	}
 }
 
@@ -238,6 +255,7 @@ func (e *simnetExpect) Assert(t *testing.T, typ core.DutyType, peerIdx int) {
 		e.Errs <- errors.New("unexpected duty type", z.Any("type", typ))
 	}
 	e.actuals[typ][peerIdx] = true
+	t.Logf("type=%v peerIdx=%d",typ,peerIdx)
 	t.Logf("asserted duty, type=%v, remaining=%d", typ, remaining(e.actuals[typ]))
 }
 
@@ -334,6 +352,10 @@ func testSimnet(t *testing.T, args simnetArgs, expect *simnetExpect) {
 				SimnetBMockOpts: append([]beaconmock.Option{
 					beaconmock.WithSlotsPerEpoch(1),
 				}, args.BMockOpts...),
+
+				AleaBLSPrivKey: args.AleaBLSPrivKeys[i+1],
+				AleaBLSPubKeys: args.AleaBLSPubKeys,
+				AleaBLSFullKey: args.AleaBLSFullKey,
 			},
 			P2P: p2p.Config{
 				TCPAddrs: []string{testutil.AvailableAddr(t).String()},

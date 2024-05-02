@@ -11,20 +11,20 @@ import (
 	"github.com/obolnetwork/charon/app/log"
 	"github.com/obolnetwork/charon/app/z"
 	"github.com/obolnetwork/charon/tbls"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // Verifiable Consistent Broadcast from the paper: "Secure and Efficient Asynchronous Broadcast Protocols"
 // Link: https://eprint.iacr.org/2001/006.pdf
 
-type Transport[V comparable] struct {
-	Broadcast func(ctx context.Context, msg VCBCMessage[V]) error
-	Unicast   func(ctx context.Context, target int64, msg VCBCMessage[V]) error
-	Receive   <-chan VCBCMessage[V]
+type Transport[I any, V comparable] struct {
+	Broadcast func(ctx context.Context, msg VCBCMessage[I, V]) error
+	Unicast   func(ctx context.Context, target int64, msg VCBCMessage[I, V]) error
+	Receive   <-chan VCBCMessage[I, V]
 }
 
 type Definition[I any, V comparable] struct {
 	BuildTag                 func(instance I, process int64) string
-	SlotFromTag              func(tag string) int64
 	IdFromTag                func(tag string) int64
 	HashValue                func(value V) []byte
 	SignData                 func(data []byte) (tbls.Signature, error)
@@ -108,10 +108,12 @@ type VCBCMessageContent struct {
 	ValueHash []byte
 }
 
-type VCBCMessage[V comparable] struct {
+type VCBCMessage[I any, V comparable] struct {
 	Source       int64
 	Content      VCBCMessageContent // Separate struct for content to allow partial signatures on specific content only
+	Instance     I
 	Value        V
+	RealValue    *anypb.Any // Only sent inside Final message
 	PartialSig   tbls.Signature
 	ThresholdSig tbls.Signature
 }
@@ -138,14 +140,15 @@ func classify(msgType MsgType) UponRule {
 
 // BroadcastRequest sends a request to all nodes for a value with a specific tag
 // It can only be called after Run has been started since the response is expected to be handled by the Run function
-func BroadcastRequest[I any, V comparable](ctx context.Context, d Definition[I, V], t Transport[V], instance I, process int64, tag string) error {
+func BroadcastRequest[I any, V comparable](ctx context.Context, d Definition[I, V], t Transport[I, V], instance I, process int64, tag string) error {
 
 	ctx = log.WithTopic(ctx, "vcbc")
 
-	log.Info(ctx, "Broadcasting VCBC request", z.I64("id", process), z.Str("tag", tag))
+	log.Debug(ctx, "VCBC Request", z.I64("id", process), z.Str("tag", tag))
 
-	return t.Broadcast(ctx, VCBCMessage[V]{
-		Source: process,
+	return t.Broadcast(ctx, VCBCMessage[I, V]{
+		Source:   process,
+		Instance: instance,
 		Content: VCBCMessageContent{
 			MsgType: MsgRequest,
 			Tag:     tag,
@@ -163,7 +166,7 @@ func isZeroVal[V comparable](v V) bool {
 }
 
 // Run executes the VCBC protocol
-func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transport[V], instance I, process int64, value V) (err error) {
+func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transport[I, V], instance I, process int64, value V) (err error) {
 
 	defer func() {
 		// Panics are used for assertions and sanity checks to reduce lines of code
@@ -178,8 +181,6 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 
 	ctx = log.WithTopic(ctx, "vcbc")
 
-	log.Info(ctx, "Starting VCBC", z.I64("id", process))
-
 	// === State ===
 
 	var (
@@ -191,19 +192,22 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 		alreadyUnicastReady = make(map[string]bool) // Store if I already sent ready to a specific tag
 	)
 
+	myTag := d.BuildTag(instance, process)
+
 	if !isZeroVal(value) {
-		err := t.Broadcast(ctx, VCBCMessage[V]{
-			Source: process,
+		err := t.Broadcast(ctx, VCBCMessage[I, V]{
+			Source:   process,
+			Instance: instance,
 			Content: VCBCMessageContent{
 				MsgType: MsgSend,
-				Tag:     d.BuildTag(instance, process),
+				Tag:     myTag,
 			},
 			Value: value,
 		})
 		if err != nil {
 			return err
 		}
-		log.Info(ctx, "Node id sent message", z.I64("id", process), z.Str("tag", d.BuildTag(instance, process)))
+		log.Debug(ctx, "VCBC sent value", z.I64("id", process), z.Str("tag", myTag))
 	}
 
 	for {
@@ -235,18 +239,19 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 						return err
 					}
 
-					err = t.Unicast(ctx, msg.Source, VCBCMessage[V]{
+					err = t.Unicast(ctx, msg.Source, VCBCMessage[I, V]{
 						Source:     process,
+						Instance:   instance,
 						Content:    content,
 						PartialSig: partialSig,
 					})
 					if err != nil {
 						return err
 					}
-					log.Info(ctx, "Node id sent ready to source", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
+					//log.Debug(ctx, "VCBC sent ready", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
 				}
 			case UponReady:
-				if partialSigsBySource[int(msg.Source)] == (tbls.Signature{}) {
+				if partialSigsBySource[int(msg.Source)] == (tbls.Signature{}) && msg.Content.Tag == myTag {
 
 					// Verify if partial signature matches message content
 					encodedMessage, err := json.Marshal(msg.Content)
@@ -255,7 +260,7 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 					}
 					err = d.VerifySignature(msg.Source, encodedMessage, msg.PartialSig)
 					if err != nil {
-						log.Info(ctx, "Node id received invalid ready signature from source", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
+						log.Debug(ctx, "Node id received invalid ready signature from source", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
 						continue
 					}
 
@@ -268,25 +273,33 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 							return err
 						}
 
-						err = t.Broadcast(ctx, VCBCMessage[V]{
-							Source: process,
+						err = t.Broadcast(ctx, VCBCMessage[I, V]{
+							Source:   process,
+							Instance: instance,
 							Content: VCBCMessageContent{
 								MsgType:   MsgFinal,
 								Tag:       msg.Content.Tag,
 								ValueHash: msg.Content.ValueHash,
 							},
+							Value:        messageByTag[msg.Content.Tag],
 							ThresholdSig: thresholdSig,
 						})
 						if err != nil {
 							return err
 						}
-						log.Info(ctx, "Node id sent final", z.I64("id", process), z.Str("tag", msg.Content.Tag))
+						log.Debug(ctx, "VCBC sent final", z.I64("id", process), z.Str("tag", msg.Content.Tag))
 					}
 				}
 			case UponFinal:
 
+				value,ok := messageByTag[msg.Content.Tag]
+				if !ok {
+					log.Debug(ctx, "Node id received final before send", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
+					continue
+				}
+
 				// Verify if final signature matches message content
-				hash := d.HashValue(messageByTag[msg.Content.Tag])
+				hash := d.HashValue(value)
 
 				content := VCBCMessageContent{
 					MsgType:   MsgReady,
@@ -300,7 +313,12 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 
 				err = d.VerifyAggregateSignature(encodedContent, msg.ThresholdSig)
 				if err != nil {
-					log.Info(ctx, "Node id received invalid final signature from source", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
+					log.Debug(ctx, "Node id received invalid final signature from source", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
+					log.Debug(ctx, "", z.Any("message", messageByTag[msg.Content.Tag]))
+					log.Debug(ctx, "", z.Any("content", content))
+					log.Debug(ctx, "", z.Any("enconded", encodedContent))
+					log.Debug(ctx, "", z.Any("sig", msg.ThresholdSig))
+					log.Error(ctx, "error:", err)
 					continue
 				}
 
@@ -308,7 +326,7 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 				if slices.Compare(hash, msg.Content.ValueHash) == 0 && thresholdSigByTag[msg.Content.Tag] == (tbls.Signature{}) {
 					thresholdSigByTag[msg.Content.Tag] = msg.ThresholdSig
 
-					log.Info(ctx, "Node id received final", z.I64("id", process), z.Str("tag", msg.Content.Tag))
+					log.Debug(ctx, "VCBC received final", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
 					for _, sub := range d.Subs {
 						err := sub(ctx, VCBCResult[V]{
 							Tag:    msg.Content.Tag,
@@ -321,8 +339,9 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 				}
 			case UponRequest:
 				if thresholdSigByTag[msg.Content.Tag] != (tbls.Signature{}) {
-					err := t.Unicast(ctx, msg.Source, VCBCMessage[V]{
-						Source: process,
+					err := t.Unicast(ctx, msg.Source, VCBCMessage[I, V]{
+						Source:   process,
+						Instance: instance,
 						Content: VCBCMessageContent{
 							MsgType: MsgAnswer,
 							Tag:     msg.Content.Tag,
@@ -333,7 +352,7 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 					if err != nil {
 						return err
 					}
-					log.Info(ctx, "Node id sent answer to source", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
+					log.Debug(ctx, "VCBC sent answer", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
 				}
 
 			case UponAnswer:
@@ -353,14 +372,14 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 
 				err = d.VerifyAggregateSignature(encodedContent, msg.ThresholdSig)
 				if err != nil {
-					log.Info(ctx, "Node id received invalid signature from source", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
+					log.Debug(ctx, "Node id received invalid signature from source", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
 					continue
 				}
 
 				// Output result
 				if thresholdSigByTag[msg.Content.Tag] == (tbls.Signature{}) {
 					thresholdSigByTag[msg.Content.Tag] = msg.ThresholdSig
-					log.Info(ctx, "Node id received answer", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
+					log.Debug(ctx, "VCBC received answer", z.I64("id", process), z.I64("source", msg.Source), z.Str("tag", msg.Content.Tag))
 					for _, sub := range d.Subs {
 						err := sub(ctx, VCBCResult[V]{
 							Tag:    msg.Content.Tag,

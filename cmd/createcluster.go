@@ -239,6 +239,31 @@ func runCreateCluster(ctx context.Context, w io.Writer, conf clusterConfig) erro
 		}
 	}
 
+	// ============= TMP =============
+	// Create BLS public key and private/public key shares
+	// Save to disk
+	var (
+		n uint = 4
+		f uint = 1
+		dir = "/compose/"
+	)
+	secret, _ := tbls.GenerateSecretKey()
+	public, _ := tbls.SecretToPublicKey(secret)
+
+	shares, _ := tbls.ThresholdSplit(secret, n, f+1)
+	pubKeys := make(map[int64]tbls.PublicKey)
+	for i, share := range shares {
+		pubKeys[int64(i)], _ = tbls.SecretToPublicKey(share)
+	}
+
+	os.WriteFile(dir+"bls_full_public", public[:], 0644)
+	for i, share := range shares {
+		a := pubKeys[int64(i)]
+		os.WriteFile(fmt.Sprintf(dir+"bls_share_public_%d", i), a[:], 0644)
+		os.WriteFile(fmt.Sprintf(dir+"bls_share_private_%d", i), share[:], 0644)
+	}
+	// ============= TMP =============
+
 	network, err := eth2util.ForkVersionToNetwork(def.ForkVersion)
 	if err != nil {
 		return err
