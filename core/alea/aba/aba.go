@@ -8,6 +8,7 @@ import (
 
 	"github.com/obolnetwork/charon/app/log"
 	"github.com/obolnetwork/charon/app/z"
+	"github.com/obolnetwork/charon/core"
 	"github.com/obolnetwork/charon/core/alea/commoncoin"
 )
 
@@ -339,7 +340,9 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule), z.Any("values", values[msg.Round]))
 				sr, exists := coinResult[msg.Round]
 				if !exists {
+					core.RecordStep(process-1, core.START_COIN)
 					coinValue, err := commoncoin.SampleCoin(ctx, dCoin, tCoin, instance, agreementRound, msg.Round, process) // Algorithm 1:9
+					core.RecordStep(process-1, core.FINISH_COIN)
 					if err != nil {
 						return 0, err
 					}

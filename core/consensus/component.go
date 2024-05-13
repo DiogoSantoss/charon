@@ -346,6 +346,9 @@ func (c *Component) Start(ctx context.Context) {
 // waits until it completes, in both cases it returns the resulting error.
 // Note this errors if called multiple times for the same duty.
 func (c *Component) Propose(ctx context.Context, duty core.Duty, data core.UnsignedDataSet) error {
+	p,_ := c.getPeerIdx()
+	core.RecordStep(p, core.START_SETUP)
+
 	// Hash the proposed data, since qbft only supports simple comparable values.
 	value, err := core.UnsignedDataSetToProto(data)
 	if err != nil {
@@ -661,18 +664,23 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 		Receive:   t.recvBufferVCBC,
 	}
 
-	testingAlea := true
+	core.RecordStep(peerIdx, core.FINISH_SETUP)
+	testingAlea := false
 
 	if testingAlea {
 		// Run the algo, blocking until the context is cancelled.
+		core.RecordStep(peerIdx, core.START_CONSENSUS)
 		err = alea.Run[core.Duty, [32]byte](ctx, dAlea, dVCBC, tVCBC, dABA, tABA, dCoin, tCoin, duty, peerIdx+1, inst.hashCh)
+		core.RecordStep(peerIdx, core.FINISH_CONSENSUS)
 		if err != nil && !isContextErr(err) {
 			consensusError.Inc()
 			return err // Only return non-context errors.
 		}
 	} else {
 		// Run the algo, blocking until the context is cancelled.
+		core.RecordStep(peerIdx, core.START_CONSENSUS)
 		err = qbft.Run[core.Duty, [32]byte](ctx, def, qt, duty, peerIdx, inst.hashCh)
+		core.RecordStep(peerIdx, core.FINISH_CONSENSUS)
 		if err != nil && !isContextErr(err) {
 			consensusError.Inc()
 			return err // Only return non-context errors.

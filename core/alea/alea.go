@@ -8,6 +8,7 @@ import (
 
 	"github.com/obolnetwork/charon/app/log"
 	"github.com/obolnetwork/charon/app/z"
+	"github.com/obolnetwork/charon/core"
 	"github.com/obolnetwork/charon/core/alea/aba"
 	"github.com/obolnetwork/charon/core/alea/commoncoin"
 	"github.com/obolnetwork/charon/core/alea/vcbc"
@@ -59,6 +60,11 @@ func Run[I any, V comparable](
 
 		valuePerPeer[dVCBC.IdFromTag(result.Tag)] = result.Result
 
+		// VCBC is considered finish when it receives its own value
+		if dVCBC.IdFromTag(result.Tag) == process {
+			core.RecordStep(process-1, core.FINISH_VCBC)
+		}
+
 		// Reference: https://gist.github.com/creachadair/ed1ebebc7df66d19ad7100e8f9296d0a
 		close(valuePerPeerCh)
 		valuePerPeerCh = make(chan struct{})
@@ -72,6 +78,7 @@ func Run[I any, V comparable](
 			for value := range inputValueCh {
 				// Close channel since only one value is expected per consensus instance
 				inputValueCh = nil
+				core.RecordStep(process-1, core.START_VCBC)
 				err := vcbc.Run(ctx, dVCBC, tVCBC, instance, process, value)
 				if err != nil {
 					errCh <- err
@@ -83,7 +90,9 @@ func Run[I any, V comparable](
 
 		// Agreement component
 		go func() {
+			core.RecordStep(process-1, core.START_ABA)
 			for {
+				core.RecordStep(process-1, core.START_ABA_ROUND)
 				leaderId := d.GetLeader(instance, agreementRound)
 
 				valuePerPeerMutex.Lock()
@@ -134,10 +143,13 @@ func Run[I any, V comparable](
 					}
 
 					log.Info(ctx, "Alea decided", z.I64("id", process), z.I64("agreementRound", agreementRound))
+					core.RecordStep(process-1, core.FINISH_ABA_ROUND)
+					core.RecordStep(process-1,core.FINISH_ABA)
 					d.Decide(ctx, instance, value)
 					break
 				}
 				agreementRound += 1
+				core.RecordStep(process-1, core.FINISH_ABA_ROUND)
 			}
 		}()
 	}
