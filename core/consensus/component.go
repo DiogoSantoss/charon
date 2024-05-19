@@ -346,7 +346,7 @@ func (c *Component) Start(ctx context.Context) {
 // waits until it completes, in both cases it returns the resulting error.
 // Note this errors if called multiple times for the same duty.
 func (c *Component) Propose(ctx context.Context, duty core.Duty, data core.UnsignedDataSet) error {
-	p,_ := c.getPeerIdx()
+	p, _ := c.getPeerIdx()
 	core.RecordStep(p, core.START_SETUP)
 
 	// Hash the proposed data, since qbft only supports simple comparable values.
@@ -553,7 +553,9 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 	}
 
 	dABA := aba.Definition{
-		Nodes: len(c.peers),
+		AsyncCoin: true,
+		FastABA:   true,
+		Nodes:     len(c.peers),
 	}
 
 	hashFunction := sha256.New()
@@ -651,11 +653,13 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 	tCoin := commoncoin.Transport[core.Duty]{
 		Broadcast: t.BroadcastCoin,
 		Receive:   t.recvBufferCoin,
+		Refill:    t.recvBufferCoin,
 	}
 
 	tABA := aba.Transport[core.Duty]{
 		Broadcast: t.BroadcastABA,
 		Receive:   t.recvBufferABA,
+		Refill:    t.recvBufferABA,
 	}
 
 	tVCBC := vcbc.Transport[core.Duty, [32]byte]{
@@ -665,7 +669,7 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 	}
 
 	core.RecordStep(peerIdx, core.FINISH_SETUP)
-	testingAlea := false
+	testingAlea := true
 
 	if testingAlea {
 		// Run the algo, blocking until the context is cancelled.

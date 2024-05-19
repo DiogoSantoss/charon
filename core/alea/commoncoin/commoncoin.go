@@ -16,6 +16,7 @@ type Transport[I any] struct {
 	Broadcast func(ctx context.Context, msg CommonCoinMessage[I]) error
 	Unicast   func(ctx context.Context, target int64, msg CommonCoinMessage[I]) error
 	Receive   <-chan CommonCoinMessage[I]
+	Refill    chan<- CommonCoinMessage[I]
 }
 
 type Definition[I any] struct {
@@ -81,8 +82,15 @@ func SampleCoin[I any](ctx context.Context, d Definition[I], t Transport[I], ins
 		select {
 		case msg := <-t.Receive:
 
-			// ignore messages from other rounds
-			if msg.AgreementRound != agreementRound || msg.AbaRound != abaRound {
+			// Message from past agreement round, don't need to handle it since
+			// ABA instances have already finished meaning that CommonCoin instances also finished
+			if msg.AgreementRound < agreementRound {
+				continue
+			}
+
+			// Need to refill since its possible to be running simultaneously with other instances
+			if msg.AgreementRound > agreementRound || msg.AbaRound != abaRound {
+				go func() { t.Refill <- msg }()
 				continue
 			}
 
@@ -94,7 +102,6 @@ func SampleCoin[I any](ctx context.Context, d Definition[I], t Transport[I], ins
 			}
 
 			signatures[int(msg.Source)] = msg.Sig
-
 			if len(signatures) >= int(d.Faulty()+1) {
 
 				result, err := d.GetCommonCoinResult(ctx, instance, agreementRound, abaRound, signatures)

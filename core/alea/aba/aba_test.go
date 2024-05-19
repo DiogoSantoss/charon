@@ -203,9 +203,12 @@ func testABA(t *testing.T, params testParametersABA) {
 				return nil
 			},
 			Receive: commonCoinChannels[i],
+			Refill: commonCoinChannels[i],
 		}
 
 		defs := Definition{
+			FastABA: true,
+			AsyncCoin: true,
 			Nodes: n,
 		}
 
@@ -276,10 +279,8 @@ func testABA(t *testing.T, params testParametersABA) {
 	go func() {
 		wg.Wait()
 		close(resultChan)
-		for i := 0; i < n; i++ {
-			close(commonCoinChannels[i])
-			close(abaChannels[i])
-		}
+		commonCoinChannels = nil
+		abaChannels = nil
 	}()
 
 	for result := range resultChan {

@@ -3,6 +3,7 @@
 package core
 
 import (
+	"crypto/rand"
 	"encoding/json"
 
 	eth2api "github.com/attestantio/go-eth2-client/api"
@@ -40,6 +41,33 @@ var (
 	_ ssz.Unmarshaler = new(VersionedBlindedProposal)
 	_ ssz.Unmarshaler = new(SyncContribution)
 )
+
+type TestData struct {
+	Payload []byte
+}
+
+type testDuty struct {
+	Payload []byte `json:"payload"`
+}
+
+func PayloadWithSize(size int) TestData {
+	payload := make([]byte, size)
+	rand.Read(payload)
+	return TestData{
+		Payload: payload,
+	}
+}
+
+func (p TestData) Clone() (UnsignedData, error) {
+	var clone TestData
+	clone.Payload = make([]byte, len(p.Payload))
+	copy(clone.Payload,  p.Payload)
+	return clone, nil
+}
+
+func (p TestData) MarshalJSON() ([]byte, error) {
+	return json.Marshal(testDuty(p))
+}
 
 // AttestationData wraps the eth2 attestation data and adds the original duty.
 // The original duty allows mapping the partial signed response from the VC
@@ -455,6 +483,13 @@ func unmarshalUnsignedData(typ DutyType, data []byte) (UnsignedData, error) {
 		var resp SyncContribution
 		if err := unmarshal(data, &resp); err != nil {
 			return nil, errors.Wrap(err, "unmarshal sync contribution")
+		}
+
+		return resp, nil
+	case DutyTest:
+		var resp TestData
+		if err := unmarshal(data, &resp); err != nil {
+			return nil, errors.Wrap(err, "unmarshal test data")
 		}
 
 		return resp, nil

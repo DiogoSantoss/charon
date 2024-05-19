@@ -2,9 +2,11 @@ package aba
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 
 	"github.com/obolnetwork/charon/app/log"
 	"github.com/obolnetwork/charon/app/z"
@@ -18,10 +20,13 @@ import (
 type Transport[I any] struct {
 	Broadcast func(ctx context.Context, msg ABAMessage[I]) error
 	Receive   <-chan ABAMessage[I]
+	Refill    chan<- ABAMessage[I]
 }
 
 type Definition struct {
-	Nodes int
+	FastABA   bool
+	AsyncCoin bool
+	Nodes     int
 }
 
 func (d Definition) Faulty() int {
@@ -44,6 +49,7 @@ type MsgType uint
 
 const (
 	MsgUnknown MsgType = iota
+	MsgInput
 	MsgInit
 	MsgAux
 	MsgConf
@@ -52,6 +58,7 @@ const (
 
 var typeLabels = map[MsgType]string{
 	MsgUnknown: "unknown",
+	MsgInput:   "input",
 	MsgInit:    "init",
 	MsgAux:     "aux",
 	MsgConf:    "conf",
@@ -72,6 +79,7 @@ const (
 	UponNothing UponRule = iota
 	UponWeakSupportInit
 	UponStrongSupportInit
+	UponFastABA
 	UponSupportAux
 	UponSupportConf
 	UponWeakSupportFinish
@@ -82,6 +90,7 @@ var ruleLabels = map[UponRule]string{
 	UponNothing:             "nothing",
 	UponWeakSupportInit:     "weak_support_init",
 	UponStrongSupportInit:   "strong_support_init",
+	UponFastABA:             "fast_aba",
 	UponSupportAux:          "support_aux",
 	UponSupportConf:         "support_conf",
 	UponWeakSupportFinish:   "weak_support_finish",
@@ -132,34 +141,51 @@ func containsMsg[I any](msgs []ABAMessage[I], msg ABAMessage[I]) bool {
 	return false
 }
 
-// Returns the triggered upon rule by the received message
-func classify[I any](d Definition, agreementRound int64, msg ABAMessage[I], values map[byte]struct{}, receivedInit map[int64][]ABAMessage[I], receivedAux map[int64][]ABAMessage[I], receivedConf map[int64][]ABAMessage[I], receivedFinish map[int64][]ABAMessage[I]) UponRule {
-
-	// ignore messages from other agreement rounds
-	if msg.AgreementRound != agreementRound {
-		return UponNothing
+// Returns a copy of the message
+func copyMsg[I any](msg ABAMessage[I]) ABAMessage[I] {
+	values := make(map[byte]struct{})
+	for k := range msg.Values {
+		values[k] = struct{}{}
 	}
+	return ABAMessage[I]{
+		MsgType:        msg.MsgType,
+		Source:         msg.Source,
+		Instance:       msg.Instance,
+		AgreementRound: msg.AgreementRound,
+		Round:          msg.Round,
+		Estimative:     msg.Estimative,
+		Values:         values,
+	}
+}
+
+// Returns the triggered upon rule by the received message
+func classify[I any](d Definition, msg ABAMessage[I], values map[byte]struct{}, receivedInput map[int64][]ABAMessage[I], receivedInit map[int64][]ABAMessage[I], receivedAux map[int64][]ABAMessage[I], receivedConf map[int64][]ABAMessage[I], receivedFinish map[int64][]ABAMessage[I]) UponRule {
 
 	switch msg.MsgType {
 	case MsgInit:
 		inits := filterByRoundAndValue(flatten(receivedInit), msg.Round, msg.Estimative)
-		if len(inits) >= d.BigQuorum() {
+		if d.FastABA && len(filterByRoundAndValue(flatten(receivedInput), msg.Round, msg.Estimative)) >= d.Nodes {
+			return UponFastABA
+		} else if len(inits) >= d.BigQuorum() {
 			return UponStrongSupportInit
 		} else if len(inits) >= d.SmallQuorum() {
 			return UponWeakSupportInit
 		}
 	case MsgAux:
 		auxs := filterByRoundAndValues(flatten(receivedAux), msg.Round, setToArray(values))
+		//fmt.Println("auxs:", msg.Round, values, auxs)
 		if len(auxs) >= d.CorrectNodes() {
 			return UponSupportAux
 		}
 	case MsgConf:
 		confs := filterByRoundAndSubsetValues(flatten(receivedConf), msg.Round, values)
+		//fmt.Println("confs:", msg.Round, msg.Values, confs)
 		if len(confs) >= d.CorrectNodes() {
 			return UponSupportConf
 		}
 	case MsgFinish:
 		finishes := filterByValue(flatten(receivedFinish), msg.Estimative)
+		//fmt.Println("finishes:", msg.Estimative, finishes)
 		if len(finishes) >= d.BigQuorum() {
 			return UponStrongSupportFinish
 		} else if len(finishes) >= d.SmallQuorum() {
@@ -170,6 +196,10 @@ func classify[I any](d Definition, agreementRound int64, msg ABAMessage[I], valu
 	}
 
 	return UponNothing
+}
+
+func isContextErr(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commoncoin.Definition[I], tCoin commoncoin.Transport[I], instance I, process int64, agreementRound int64, valueInput byte) (result byte, err error) {
@@ -189,22 +219,41 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 
 	// === State ===
 	var (
-		estimative                    = make(map[int64]byte)
-		values                        = make(map[int64]map[byte]struct{})
-		coinResult                    = make(map[int64]byte)
+		estimative = make(map[int64]byte)
+		values     = make(map[int64]map[byte]struct{})
+
+		coinResult      = make(map[int64]byte)
+		coinResultMutex sync.Mutex
+		coinResultCh    = make(chan struct{})
+
 		alreadyBroadcastedInit        = make(map[int64]bool)
 		alreadyBroadcastedAux         = make(map[int64]bool)
 		alreadyBroadcastedFinish bool = false
-		receivedInit                  = make(map[int64][]ABAMessage[I])
-		receivedAux                   = make(map[int64][]ABAMessage[I])
-		receivedConf                  = make(map[int64][]ABAMessage[I])
-		receivedFinish                = make(map[int64][]ABAMessage[I])
+
+		receivedInput  = make(map[int64][]ABAMessage[I])
+		receivedInit   = make(map[int64][]ABAMessage[I])
+		receivedAux    = make(map[int64][]ABAMessage[I])
+		receivedConf   = make(map[int64][]ABAMessage[I])
+		receivedFinish = make(map[int64][]ABAMessage[I])
 	)
 
 	// Store received messages and returns true if the message is new
 	// If the message is already stored, no need to handle it
 	storeMessage := func(msg ABAMessage[I]) bool {
+		// Print address
 		switch msg.MsgType {
+		case MsgInput:
+			// Store both as INPUT and INIT
+			if !containsMsg(receivedInput[msg.Source], msg) {
+				receivedInput[msg.Source] = append(receivedInput[msg.Source], msg)
+
+				msgCopy := copyMsg(msg)
+				msgCopy.MsgType = MsgInit
+				if !containsMsg(receivedInit[msg.Source], msgCopy) {
+					receivedInit[msg.Source] = append(receivedInit[msg.Source], msgCopy)
+				}
+				return true
+			}
 		case MsgInit:
 			if !containsMsg(receivedInit[msg.Source], msg) {
 				receivedInit[msg.Source] = append(receivedInit[msg.Source], msg)
@@ -231,6 +280,19 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 		return false
 	}
 
+	computeCoin := func(round int64) {
+		coinValue, err := commoncoin.SampleCoin(ctx, dCoin, tCoin, instance, agreementRound, round, process) // Algorithm 1:9
+		if err != nil && !isContextErr(err) {
+			log.Debug(ctx, "Error computing common coin", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", round), z.Err(err))
+			return
+		}
+		coinResultMutex.Lock()
+		coinResult[round] = coinValue
+		close(coinResultCh)
+		coinResultCh = make(chan struct{})
+		coinResultMutex.Unlock()
+	}
+
 	alreadyBroadcastedInit[0] = true
 	values[0] = make(map[byte]struct{})
 
@@ -241,7 +303,7 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 
 	{ // Algorithm 1:4
 		err := t.Broadcast(ctx, ABAMessage[I]{
-			MsgType:        MsgInit,
+			MsgType:        MsgInput,
 			Source:         process,
 			Instance:       instance,
 			AgreementRound: agreementRound,
@@ -253,15 +315,35 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 		}
 	}
 
+	if d.AsyncCoin {
+		go computeCoin(0) // Optimization 1
+	}
+
 	for {
 		select {
 		case msg := <-t.Receive:
+
+			// TODO create another buffer to store this messages and when ABA finishes, refill for next agreement round
+			// this should improve performance
+			// Message from past agreement round, don't need to handle it since locally already moved to the next round
+			if msg.AgreementRound < agreementRound {
+				continue
+				// Message from future agreement round, refill channel to handle it later
+			} else if msg.AgreementRound > agreementRound {
+				go func() { t.Refill <- msg }()
+				break
+			}
 
 			if !storeMessage(msg) {
 				break
 			}
 
-			rule := classify(d, agreementRound, msg, values[msg.Round], receivedInit, receivedAux, receivedConf, receivedFinish)
+			// Handle INPUT messages as INIT messages
+			if msg.MsgType == MsgInput {
+				msg.MsgType = MsgInit
+			}
+
+			rule := classify(d, msg, values[msg.Round], receivedInput, receivedInit, receivedAux, receivedConf, receivedFinish)
 			if rule == UponNothing {
 				break
 			}
@@ -281,10 +363,10 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 
 			case UponStrongSupportFinish: // Algorithm 1:2
 				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
-				return msg.Estimative, nil
+				return msg.Estimative, nil //  TODO perhaps nodes should not return and instead keep running (forever?)
 
 			case UponWeakSupportInit: // Algorithm 1:5
-				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
+				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule), z.Any("estimative", msg.Estimative))
 				msg.Source = process
 				err := t.Broadcast(ctx, msg)
 				if err != nil {
@@ -297,7 +379,7 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 				}
 				values[msg.Round][msg.Estimative] = struct{}{}
 				if !alreadyBroadcastedAux[msg.Round] {
-					log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
+					log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule), z.Any("estimative", msg.Estimative))
 					alreadyBroadcastedAux[msg.Round] = true
 					err := t.Broadcast(ctx, ABAMessage[I]{
 						MsgType:        MsgAux,
@@ -310,14 +392,87 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 					if err != nil {
 						return 0, err
 					}
+				} else {
+					log.Debug(ctx, "ABA already broadcasted aux", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule), z.Any("estimative", msg.Estimative))
+				}
+
+				// TODO confirm with advisor
+				// Since values set may have changed, verify if it is possible to broadcast CONF based on existing AUX messages
+				auxs := filterByRoundAndValues(flatten(receivedAux), msg.Round, setToArray(values[msg.Round]))
+				if len(auxs) >= d.CorrectNodes() {
+					log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule), z.Any("values", values[msg.Round]))
+					values_copy := make(map[byte]struct{})
+					for k, v := range values[msg.Round] {
+						values_copy[k] = v
+					}
+					err := t.Broadcast(ctx, ABAMessage[I]{
+						MsgType:        MsgConf,
+						Source:         process,
+						Instance:       instance,
+						AgreementRound: agreementRound,
+						Round:          msg.Round,
+						//Values:  values[msg.Round],
+						Values: values_copy,
+					})
+					if err != nil {
+						return 0, err
+					}
+				}
+
+			case UponFastABA: // Optimization 2
+				if values[msg.Round] == nil {
+					values[msg.Round] = make(map[byte]struct{})
+				}
+				values[msg.Round][msg.Estimative] = struct{}{}
+
+				if !alreadyBroadcastedFinish {
+					log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
+					alreadyBroadcastedFinish = true
+					estimative[msg.Round+1] = msg.Estimative
+					err := t.Broadcast(ctx, ABAMessage[I]{
+						MsgType:        MsgFinish,
+						Source:         process,
+						Instance:       instance,
+						AgreementRound: agreementRound,
+						Round:          msg.Round,
+						Estimative:     msg.Estimative,
+					})
+					if err != nil {
+						return 0, err
+					}
+
+					// Equivalent to "return to step 4" in Algorithm 1:10
+					next_round := msg.Round + 1
+
+					if !alreadyBroadcastedInit[next_round] {
+
+						alreadyBroadcastedInit[next_round] = true
+						if values[next_round] == nil {
+							values[next_round] = make(map[byte]struct{})
+						}
+
+						log.Debug(ctx, "ABA new round estimative", z.I64("id", process), z.I64("agreementRound", msg.AgreementRound), z.I64("abaRound", next_round), z.U8("estimative", estimative[next_round]))
+						err := t.Broadcast(ctx, ABAMessage[I]{
+							MsgType:        MsgInput,
+							Source:         process,
+							Instance:       instance,
+							AgreementRound: agreementRound,
+							Round:          next_round,
+							Estimative:     estimative[next_round],
+						})
+						if err != nil {
+							return 0, err
+						}
+
+						if d.AsyncCoin {
+							go computeCoin(next_round)
+						}
+					}
 				}
 
 			case UponSupportAux: // Algorithm 1:7
-				// TODO
-				// Why does this solve the data race??
-				// sending values[msg.Round] should be a copy, not the
-				// same reference
-				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule))
+				// TODO Why does this solve the data race?? sending values[msg.Round] should be a copy, not the same reference
+				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule), z.Any("values", values[msg.Round]))
 				values_copy := make(map[byte]struct{})
 				for k, v := range values[msg.Round] {
 					values_copy[k] = v
@@ -338,16 +493,43 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 			case UponSupportConf: // Algorithm 1:8
 
 				log.Debug(ctx, "ABA upon rule triggered", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", msg.Round), z.Any("rule", rule), z.Any("values", values[msg.Round]))
-				sr, exists := coinResult[msg.Round]
-				if !exists {
-					core.RecordStep(process-1, core.START_COIN)
-					coinValue, err := commoncoin.SampleCoin(ctx, dCoin, tCoin, instance, agreementRound, msg.Round, process) // Algorithm 1:9
-					core.RecordStep(process-1, core.FINISH_COIN)
-					if err != nil {
-						return 0, err
+
+				var (
+					sr     byte
+					exists bool
+				)
+				// AsyncCoin must wait for asynchronous call to finish
+				if d.AsyncCoin {
+					coinResultMutex.Lock()
+					sr, exists = coinResult[msg.Round]
+					ch := coinResultCh
+					coinResultMutex.Unlock()
+
+					for !exists {
+						select {
+						case <-ctx.Done():
+							log.Debug(ctx, "Context done, did not finish common coin", z.I64("id", process), z.I64("agreementRound", agreementRound))
+							return 0, ctx.Err()
+						case <-ch:
+							coinResultMutex.Lock()
+							sr, exists = coinResult[msg.Round]
+							ch = coinResultCh
+							coinResultMutex.Unlock()
+						}
 					}
-					sr = coinValue
-					coinResult[msg.Round] = coinValue
+					// Not AsyncCoin, calls blocking function
+				} else {
+					sr, exists = coinResult[msg.Round]
+					if !exists {
+						core.RecordStep(process-1, core.START_COIN)
+						coinValue, err := commoncoin.SampleCoin(ctx, dCoin, tCoin, instance, agreementRound, msg.Round, process) // Algorithm 1:9
+						core.RecordStep(process-1, core.FINISH_COIN)
+						if err != nil {
+							return 0, err
+						}
+						sr = coinValue
+						coinResult[msg.Round] = coinValue
+					}
 				}
 
 				//Algorithm 1:10
@@ -377,6 +559,8 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 						if err != nil {
 							return 0, err
 						}
+					} else if (value == sr) && (alreadyBroadcastedFinish) {
+						log.Debug(ctx, "ABA already broadcasted finish", z.I64("id", process), z.I64("agreementRound", msg.AgreementRound), z.I64("abaRound", msg.Round), z.U8("value", value))
 					}
 				}
 
@@ -392,7 +576,7 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 
 					log.Debug(ctx, "ABA new round estimative", z.I64("id", process), z.I64("agreementRound", msg.AgreementRound), z.I64("abaRound", next_round), z.U8("estimative", estimative[next_round]))
 					err := t.Broadcast(ctx, ABAMessage[I]{
-						MsgType:        MsgInit,
+						MsgType:        MsgInput,
 						Source:         process,
 						Instance:       instance,
 						AgreementRound: agreementRound,
@@ -401,6 +585,10 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 					})
 					if err != nil {
 						return 0, err
+					}
+
+					if d.AsyncCoin {
+						go computeCoin(next_round)
 					}
 				}
 

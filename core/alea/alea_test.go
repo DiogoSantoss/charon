@@ -238,6 +238,8 @@ func testAlea(t *testing.T, p testParametersAlea) {
 		}
 
 		defsABA := aba.Definition{
+			AsyncCoin: true,
+			FastABA: true,
 			Nodes: n,
 		}
 
@@ -257,6 +259,7 @@ func testAlea(t *testing.T, p testParametersAlea) {
 				return nil
 			},
 			Receive: commonCoinChannels[i],
+			Refill: commonCoinChannels[i],
 		}
 
 		defsCoin := commoncoin.Definition[int64]{
@@ -307,7 +310,9 @@ func testAlea(t *testing.T, p testParametersAlea) {
 				return nil
 			},
 			Unicast: func(ctx context.Context, target int64, msg vcbc.VCBCMessage[int64, int64]) error {
-				vcbcChannels[target-1] <- msg
+				if vcbcChannels != nil {
+					vcbcChannels[target-1] <- msg
+				}
 				return nil
 			},
 			Receive: vcbcChannels[i],
@@ -389,11 +394,9 @@ func testAlea(t *testing.T, p testParametersAlea) {
 
 	// Close channels when all done
 	wg.Wait()
-	for i := 0; i < n; i++ {
-		close(vcbcChannels[i])
-		close(abaChannels[i])
-		close(commonCoinChannels[i])
-	}
+	vcbcChannels = nil
+	abaChannels = nil
+	commonCoinChannels = nil
 
 	require.Condition(t, func() (success bool) {
 		if len(resultList) <= 0 {

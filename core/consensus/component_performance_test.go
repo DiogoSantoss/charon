@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -52,19 +52,19 @@ func TestComponentPerformanceLatency(t *testing.T) {
 	go core.ConsumePerformanceBuffer()
 
 	// Destination file
-	filename := "test.json"
-	path := "/home/diogo/dev/ist/thesis/graphs/data/"
-	loads := []int{1, 10}
+	filename := "test2.json"
+	path := "/home/diogo/dev/ist/thesis/graphs/Payload/"
+	loads := []int{1, 40, 80, 120, 160, 200}
 
-	data := make(map[int][]float64)
+	Payload := make(map[int][]float64)
 	for _, load := range loads {
-		data[load] = testComponentPerformanceLatency(t, load)
+		Payload[load] = testComponentPerformanceLatency(t, load)
 	}
 
 	file, _ := os.Create(path + filename)
 	defer file.Close()
 	encoder := json.NewEncoder(file)
-	encoder.Encode(data)
+	encoder.Encode(Payload)
 }
 
 func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
@@ -128,12 +128,12 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 	var (
 		loadDuration      = make([]float64, 0)
 		proposeDuration   = make([]float64, 0)
-		setupDuration     = make([]float64, 0)
-		consensusDuration = make([]float64, 0)
-		vcbcDuration      = make([]float64, 0)
-		abaDuration       = make([]float64, 0)
-		abaRoundDuration  = make([]float64, 0)
-		coinDuration      = make([]float64, 0)
+		//setupDuration     = make([]float64, 0)
+		//consensusDuration = make([]float64, 0)
+		//vcbcDuration      = make([]float64, 0)
+		//abaDuration       = make([]float64, 0)
+		//abaRoundDuration  = make([]float64, 0)
+		//coinDuration      = make([]float64, 0)
 	)
 
 	// Run the test N times to average the results
@@ -199,15 +199,15 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 		time.Sleep(100 * time.Millisecond)
 		loadDuration = append(loadDuration, core.ComputeAverageStep(core.START_LOAD, core.FINISH_LOAD, 1))
 		proposeDuration = append(proposeDuration, core.ComputeAverageStep(core.START_PROPOSE, core.FINISH_PROPOSE, n))
-		setupDuration = append(setupDuration, core.ComputeAverageStep(core.START_SETUP, core.FINISH_SETUP, n))
-		consensusDuration = append(consensusDuration, core.ComputeAverageStep(core.START_CONSENSUS, core.FINISH_CONSENSUS, n))
-		vcbcDuration = append(vcbcDuration, core.ComputeAverageStep(core.START_VCBC, core.FINISH_VCBC, n))
-		abaDuration = append(abaDuration, core.ComputeAverageStep(core.START_ABA, core.FINISH_ABA, n))
-		abaRoundDuration = append(abaRoundDuration, core.ComputeAverageStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
-		coinDuration = append(coinDuration, core.ComputeAverageStep(core.START_COIN, core.FINISH_COIN, n))
+		//setupDuration = append(setupDuration, core.ComputeAverageStep(core.START_SETUP, core.FINISH_SETUP, n))
+		//consensusDuration = append(consensusDuration, core.ComputeAverageStep(core.START_CONSENSUS, core.FINISH_CONSENSUS, n))
+		//vcbcDuration = append(vcbcDuration, core.ComputeAverageStep(core.START_VCBC, core.FINISH_VCBC, n))
+		//abaDuration = append(abaDuration, core.ComputeAverageStep(core.START_ABA, core.FINISH_ABA, n))
+		//abaRoundDuration = append(abaRoundDuration, core.ComputeAverageStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
+		//coinDuration = append(coinDuration, core.ComputeAverageStep(core.START_COIN, core.FINISH_COIN, n))
 
-		fmt.Println("ABA round durations:")
-		fmt.Println(core.ComputerAverageRepeatedStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
+		//fmt.Println("ABA round durations:")
+		//fmt.Println(core.ComputerAverageRepeatedStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
 
 		// Record metrics per iteration
 		core.ClearMetrics()
@@ -219,23 +219,45 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 	fmt.Printf("Load Duration\nAvg: %f\nStd: %f\n", avg, std)
 	avg, std = core.ComputeAverageAndStandardDeviation(proposeDuration)
 	fmt.Printf("Propose Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(setupDuration)
-	fmt.Printf("Setup Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(consensusDuration)
-	fmt.Printf("Consensus Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(vcbcDuration)
-	fmt.Printf("VCBC Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(abaDuration)
-	fmt.Printf("ABA Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(abaRoundDuration)
-	fmt.Printf("ABA Round Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(coinDuration)
-	fmt.Printf("Coin Duration\nAvg: %f\nStd: %f\n", avg, std)
+	//avg, std = core.ComputeAverageAndStandardDeviation(setupDuration)
+	//fmt.Printf("Setup Duration\nAvg: %f\nStd: %f\n", avg, std)
+	//avg, std = core.ComputeAverageAndStandardDeviation(consensusDuration)
+	//fmt.Printf("Consensus Duration\nAvg: %f\nStd: %f\n", avg, std)
+	//avg, std = core.ComputeAverageAndStandardDeviation(vcbcDuration)
+	//fmt.Printf("VCBC Duration\nAvg: %f\nStd: %f\n", avg, std)
+	//avg, std = core.ComputeAverageAndStandardDeviation(abaDuration)
+	//fmt.Printf("ABA Duration\nAvg: %f\nStd: %f\n", avg, std)
+	//avg, std = core.ComputeAverageAndStandardDeviation(abaRoundDuration)
+	//fmt.Printf("ABA Round Duration\nAvg: %f\nStd: %f\n", avg, std)
+	//avg, std = core.ComputeAverageAndStandardDeviation(coinDuration)
+	//fmt.Printf("Coin Duration\nAvg: %f\nStd: %f\n", avg, std)
 
 	return loadDuration
 }
 
+
 func TestComponentPerformanceThroughput(t *testing.T) {
+	// Consume metrics buffer
+	go core.ConsumePerformanceBuffer()
+
+	// Destination file
+	filename := "throughput_test.json"
+	path := "/home/diogo/dev/ist/thesis/graphs/data/"
+	// From 256 bytes to 1MB
+	sizes := []int{256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072}
+
+	Payload := make(map[int]float64)
+	for _, size := range sizes {
+		Payload[size] = testComponentPerformanceThroughput(t, size)
+	}
+
+	file, _ := os.Create(path + filename)
+	defer file.Close()
+	encoder := json.NewEncoder(file)
+	encoder.Encode(Payload)
+}
+
+func testComponentPerformanceThroughput(t *testing.T, size int) float64 {
 	t.Helper()
 
 	var (
@@ -292,8 +314,6 @@ func TestComponentPerformanceThroughput(t *testing.T) {
 
 	pubkey := testutil.RandomCorePubKey(t)
 
-	go core.ConsumePerformanceBuffer()
-
 	ctx, cancel = context.WithCancel(context.Background())
 
 	for i := 0; i < n; i++ {
@@ -318,6 +338,9 @@ func TestComponentPerformanceThroughput(t *testing.T) {
 		reachedDeadline = true
 		cancel()
 	}()
+
+	d := core.PayloadWithSize(size)
+
 	for it = 0; !reachedDeadline; it++ {
 
 		// Propose values (blocking)
@@ -325,8 +348,8 @@ func TestComponentPerformanceThroughput(t *testing.T) {
 			go func(ctx context.Context, i int, c *consensus.Component) {
 				runErrs <- c.Propose(
 					log.WithCtx(ctx, z.Int("node", i), z.Str("peer", p2p.PeerName(hosts[i].ID()))),
-					core.Duty{Type: core.DutyAttester, Slot: uint64(it)},
-					core.UnsignedDataSet{pubkey: testutil.RandomCoreAttestationData(t)},
+					core.Duty{Type: core.DutyTest, Slot: uint64(it)},
+					core.UnsignedDataSet{pubkey: d},
 				)
 			}(ctx, i, c)
 		}
@@ -360,7 +383,10 @@ func TestComponentPerformanceThroughput(t *testing.T) {
 	}
 
 	// TODO: why -2
-	fmt.Printf("Duration: %ds\nDuties Agreed: %d\nThroughput: %d duties/s\n", duration, it-2, (it-2)/int(duration))
+	dutiesPerSecond := (it - 2) / int(duration)
+	fmt.Printf("Duration: %ds\nDuties Agreed: %d\nThroughput: %d duties/s\n", duration, it-2, dutiesPerSecond)
+
+	return float64(dutiesPerSecond)
 }
 
 func TestComponentPerformanceCrash(t *testing.T) {
