@@ -42,7 +42,7 @@ const (
 	DutyTest                    DutyType = 14
 	// Only ever append new types here...
 
-	dutySentinel DutyType = 14 // Must always be last
+	dutySentinel DutyType = 15 // Must always be last
 )
 
 func (d DutyType) Valid() bool {

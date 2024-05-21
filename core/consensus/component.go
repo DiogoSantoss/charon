@@ -690,7 +690,6 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 			return err // Only return non-context errors.
 		}
 	}
-
 	if !decided {
 		consensusTimeout.WithLabelValues(duty.Type.String(), string(roundTimer.Type())).Inc()
 

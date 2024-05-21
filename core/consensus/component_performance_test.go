@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"math/rand"
+	"os"
 	"testing"
 	"time"
 
@@ -51,26 +51,25 @@ func TestComponentPerformanceLatency(t *testing.T) {
 	// Consume metrics buffer
 	go core.ConsumePerformanceBuffer()
 
-	// Destination file
-	filename := "test2.json"
-	path := "/home/diogo/dev/ist/thesis/graphs/Payload/"
 	loads := []int{1, 40, 80, 120, 160, 200}
 
-	Payload := make(map[int][]float64)
+	data := make(map[int][]float64)
 	for _, load := range loads {
-		Payload[load] = testComponentPerformanceLatency(t, load)
+		data[load] = testComponentPerformanceLatency(t, load)
 	}
 
+	// Store to file
+	filename := "temp_latency.json"
+	path := "/home/diogo/dev/ist/thesis/graphs/data/"
 	file, _ := os.Create(path + filename)
 	defer file.Close()
-	encoder := json.NewEncoder(file)
-	encoder.Encode(Payload)
+	json.NewEncoder(file).Encode(data)
 }
 
 func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 	t.Helper()
 
-	var (
+	const (
 		n    = 4
 		f    = 1
 		seed = 0
@@ -128,15 +127,15 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 	var (
 		loadDuration      = make([]float64, 0)
 		proposeDuration   = make([]float64, 0)
-		//setupDuration     = make([]float64, 0)
-		//consensusDuration = make([]float64, 0)
-		//vcbcDuration      = make([]float64, 0)
-		//abaDuration       = make([]float64, 0)
-		//abaRoundDuration  = make([]float64, 0)
-		//coinDuration      = make([]float64, 0)
+		setupDuration     = make([]float64, 0)
+		consensusDuration = make([]float64, 0)
+		vcbcDuration      = make([]float64, 0)
+		abaDuration       = make([]float64, 0)
+		abaRoundDuration  = make([]float64, 0)
+		coinDuration      = make([]float64, 0)
 	)
 
-	// Run the test N times to average the results
+	// Run test N times to average results
 	for it := 0; it < 5; it++ {
 
 		ctx, cancel = context.WithCancel(context.Background())
@@ -199,15 +198,15 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 		time.Sleep(100 * time.Millisecond)
 		loadDuration = append(loadDuration, core.ComputeAverageStep(core.START_LOAD, core.FINISH_LOAD, 1))
 		proposeDuration = append(proposeDuration, core.ComputeAverageStep(core.START_PROPOSE, core.FINISH_PROPOSE, n))
-		//setupDuration = append(setupDuration, core.ComputeAverageStep(core.START_SETUP, core.FINISH_SETUP, n))
-		//consensusDuration = append(consensusDuration, core.ComputeAverageStep(core.START_CONSENSUS, core.FINISH_CONSENSUS, n))
-		//vcbcDuration = append(vcbcDuration, core.ComputeAverageStep(core.START_VCBC, core.FINISH_VCBC, n))
-		//abaDuration = append(abaDuration, core.ComputeAverageStep(core.START_ABA, core.FINISH_ABA, n))
-		//abaRoundDuration = append(abaRoundDuration, core.ComputeAverageStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
-		//coinDuration = append(coinDuration, core.ComputeAverageStep(core.START_COIN, core.FINISH_COIN, n))
+		setupDuration = append(setupDuration, core.ComputeAverageStep(core.START_SETUP, core.FINISH_SETUP, n))
+		consensusDuration = append(consensusDuration, core.ComputeAverageStep(core.START_CONSENSUS, core.FINISH_CONSENSUS, n))
+		vcbcDuration = append(vcbcDuration, core.ComputeAverageStep(core.START_VCBC, core.FINISH_VCBC, n))
+		abaDuration = append(abaDuration, core.ComputeAverageStep(core.START_ABA, core.FINISH_ABA, n))
+		abaRoundDuration = append(abaRoundDuration, core.ComputeAverageStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
+		coinDuration = append(coinDuration, core.ComputeAverageStep(core.START_COIN, core.FINISH_COIN, n))
 
-		//fmt.Println("ABA round durations:")
-		//fmt.Println(core.ComputerAverageRepeatedStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
+		fmt.Println("ABA round durations:")
+		fmt.Println(core.ComputerAverageRepeatedStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
 
 		// Record metrics per iteration
 		core.ClearMetrics()
@@ -219,48 +218,47 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 	fmt.Printf("Load Duration\nAvg: %f\nStd: %f\n", avg, std)
 	avg, std = core.ComputeAverageAndStandardDeviation(proposeDuration)
 	fmt.Printf("Propose Duration\nAvg: %f\nStd: %f\n", avg, std)
-	//avg, std = core.ComputeAverageAndStandardDeviation(setupDuration)
-	//fmt.Printf("Setup Duration\nAvg: %f\nStd: %f\n", avg, std)
-	//avg, std = core.ComputeAverageAndStandardDeviation(consensusDuration)
-	//fmt.Printf("Consensus Duration\nAvg: %f\nStd: %f\n", avg, std)
-	//avg, std = core.ComputeAverageAndStandardDeviation(vcbcDuration)
-	//fmt.Printf("VCBC Duration\nAvg: %f\nStd: %f\n", avg, std)
-	//avg, std = core.ComputeAverageAndStandardDeviation(abaDuration)
-	//fmt.Printf("ABA Duration\nAvg: %f\nStd: %f\n", avg, std)
-	//avg, std = core.ComputeAverageAndStandardDeviation(abaRoundDuration)
-	//fmt.Printf("ABA Round Duration\nAvg: %f\nStd: %f\n", avg, std)
-	//avg, std = core.ComputeAverageAndStandardDeviation(coinDuration)
-	//fmt.Printf("Coin Duration\nAvg: %f\nStd: %f\n", avg, std)
+	avg, std = core.ComputeAverageAndStandardDeviation(setupDuration)
+	fmt.Printf("Setup Duration\nAvg: %f\nStd: %f\n", avg, std)
+	avg, std = core.ComputeAverageAndStandardDeviation(consensusDuration)
+	fmt.Printf("Consensus Duration\nAvg: %f\nStd: %f\n", avg, std)
+	avg, std = core.ComputeAverageAndStandardDeviation(vcbcDuration)
+	fmt.Printf("VCBC Duration\nAvg: %f\nStd: %f\n", avg, std)
+	avg, std = core.ComputeAverageAndStandardDeviation(abaDuration)
+	fmt.Printf("ABA Duration\nAvg: %f\nStd: %f\n", avg, std)
+	avg, std = core.ComputeAverageAndStandardDeviation(abaRoundDuration)
+	fmt.Printf("ABA Round Duration\nAvg: %f\nStd: %f\n", avg, std)
+	avg, std = core.ComputeAverageAndStandardDeviation(coinDuration)
+	fmt.Printf("Coin Duration\nAvg: %f\nStd: %f\n", avg, std)
 
 	return loadDuration
 }
-
 
 func TestComponentPerformanceThroughput(t *testing.T) {
 	// Consume metrics buffer
 	go core.ConsumePerformanceBuffer()
 
-	// Destination file
-	filename := "throughput_test.json"
-	path := "/home/diogo/dev/ist/thesis/graphs/data/"
 	// From 256 bytes to 1MB
-	sizes := []int{256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072}
-
-	Payload := make(map[int]float64)
+	//sizes := []int{256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072}
+	sizes := []int{262144}
+	data := make(map[int][]float64)
 	for _, size := range sizes {
-		Payload[size] = testComponentPerformanceThroughput(t, size)
+		data[size] = testComponentPerformanceThroughput(t, size)
+		fmt.Println(data)
 	}
 
+	// Store to file
+	filename := "temp_throughput_2.json"
+	path := "/home/diogo/dev/ist/thesis/graphs/data/"
 	file, _ := os.Create(path + filename)
 	defer file.Close()
-	encoder := json.NewEncoder(file)
-	encoder.Encode(Payload)
+	json.NewEncoder(file).Encode(data)
 }
 
-func testComponentPerformanceThroughput(t *testing.T, size int) float64 {
+func testComponentPerformanceThroughput(t *testing.T, size int) (measurements []float64) {
 	t.Helper()
 
-	var (
+	const (
 		n    = 4
 		f    = 1
 		seed = 0
@@ -268,6 +266,7 @@ func testComponentPerformanceThroughput(t *testing.T, size int) float64 {
 
 	random := rand.New(rand.NewSource(0))
 	lock, p2pkeys, _ := cluster.NewForT(t, 1, f+1, n, seed, random)
+	pubkey := testutil.RandomCorePubKey(t)
 	abftPublic, _, abftPubKeys, abftShares := createBLSKeys(t, uint(n), uint(f))
 
 	var (
@@ -312,81 +311,88 @@ func testComponentPerformanceThroughput(t *testing.T, size int) float64 {
 		}
 	}
 
-	pubkey := testutil.RandomCorePubKey(t)
-
-	ctx, cancel = context.WithCancel(context.Background())
-
-	for i := 0; i < n; i++ {
-		c, err := consensus.New(hosts[i], new(p2p.Sender), peers, p2pkeys[i], testDeadliner{}, func(core.Duty) bool { return true }, func(sci *pbv1.SniffedConsensusInstance) {}, abftShares[i+1], abftPublic, abftPubKeys)
-		require.NoError(t, err)
-		c.Subscribe(func(_ context.Context, _ core.Duty, set core.UnsignedDataSet) error {
-			results <- set
-			return nil
-		})
-		c.Start(log.WithCtx(ctx, z.Int("node", i)))
-
-		components = append(components, c)
-	}
-
-	var (
-		duration        time.Duration = 3
-		it              int
-		reachedDeadline bool = false
-	)
-	go func() {
-		time.Sleep(duration * time.Second)
-		reachedDeadline = true
-		cancel()
-	}()
-
 	d := core.PayloadWithSize(size)
 
-	for it = 0; !reachedDeadline; it++ {
+	for it := 0; it < 5; it++ {
 
-		// Propose values (blocking)
-		for i, c := range components {
-			go func(ctx context.Context, i int, c *consensus.Component) {
-				runErrs <- c.Propose(
-					log.WithCtx(ctx, z.Int("node", i), z.Str("peer", p2p.PeerName(hosts[i].ID()))),
-					core.Duty{Type: core.DutyTest, Slot: uint64(it)},
-					core.UnsignedDataSet{pubkey: d},
-				)
-			}(ctx, i, c)
+		components = nil
+
+		for i := 0; i < n; i++ {
+			c, err := consensus.New(hosts[i], new(p2p.Sender), peers, p2pkeys[i], testDeadliner{}, func(core.Duty) bool { return true }, func(sci *pbv1.SniffedConsensusInstance) {}, abftShares[i+1], abftPublic, abftPubKeys)
+			require.NoError(t, err)
+			c.Subscribe(func(_ context.Context, _ core.Duty, set core.UnsignedDataSet) error {
+				results <- set
+				return nil
+			})
+			c.Start(log.WithCtx(ctx, z.Int("node", i)))
+
+			components = append(components, c)
 		}
 
-		var (
-			count  int
-			result core.UnsignedDataSet
-		)
-		for {
-			select {
-			case err := <-runErrs:
-				if !reachedDeadline {
-					testutil.RequireNoError(t, err)
-				}
-			case res := <-results:
-				if count == 0 {
-					result = res
-				} else {
-					require.EqualValues(t, result, res)
-				}
-				count++
+		dutiesCompleted := 0
+		running := true
+
+		go func() {
+			time.Sleep(3 * time.Second)
+			running = false
+		}()
+
+		for ; running; dutiesCompleted++ {
+			//fmt.Println("started", dutiesCompleted)
+
+			// Unblock propose
+			ctx, cancel = context.WithCancel(context.Background())
+			for i, c := range components {
+				go func(ctx context.Context, i int, c *consensus.Component) {
+					runErrs <- c.Propose(
+						log.WithCtx(ctx, z.Int("node", i), z.Str("peer", p2p.PeerName(hosts[i].ID()))),
+						core.Duty{Type: core.DutyTest, Slot: uint64(dutiesCompleted)},
+						core.UnsignedDataSet{pubkey: d},
+					)
+				}(ctx, i, c)
 			}
 
-			if count == n {
-				break
+			var (
+				count  int
+				result core.UnsignedDataSet
+			)
+			for {
+				select {
+				case <-runErrs:
+					// Issue:
+					// When we cancel() the context, the propose function may return a consensus timeout errro
+					// This is only consumed on the next iteration when dutionsCompleted = 0
+					//if running && dutiesCompleted != 0 {
+					//	testutil.RequireNoError(t, err)
+					//}
+
+				case res := <-results:
+					//fmt.Println("res")
+					if count == 0 {
+						result = res
+					} else {
+						require.EqualValues(t, result, res)
+					}
+					count++
+				}
+
+				if count == n {
+					break
+				}
+
+				if !running {
+					break
+				}
 			}
-			if reachedDeadline {
-				break
-			}
+			cancel()
+			//fmt.Println("finished", dutiesCompleted)
 		}
+		measurements = append(measurements, float64(dutiesCompleted))
 	}
 
-	// TODO: why -2
-	dutiesPerSecond := (it - 2) / int(duration)
-	fmt.Printf("Duration: %ds\nDuties Agreed: %d\nThroughput: %d duties/s\n", duration, it-2, dutiesPerSecond)
+	fmt.Println(measurements)
 
-	return float64(dutiesPerSecond)
+	return measurements
 }
 
 func TestComponentPerformanceCrash(t *testing.T) {
