@@ -334,6 +334,7 @@ func (t *transport) ProcessReceives(ctx context.Context, outerBuffer chan msg) {
 		case <-ctx.Done():
 			return
 		case msg := <-outerBuffer:
+			core.RecordStep(msg.msg.PeerIdx, core.START_QBFT_PROCESS_MSG)
 			t.setValues(msg)
 
 			select {
@@ -341,6 +342,7 @@ func (t *transport) ProcessReceives(ctx context.Context, outerBuffer chan msg) {
 				return
 			case t.recvBuffer <- msg:
 				t.sniffer.Add(msg.ToConsensusMsg())
+				core.RecordStep(msg.msg.PeerIdx, core.FINISH_QBFT_PROCESS_MSG)
 			}
 		}
 	}
@@ -407,6 +409,7 @@ func (t *transport) ProcessReceivesVCBC(ctx context.Context, outerBuffer chan *p
 			return
 		case msg := <-outerBuffer:
 
+			core.RecordStep(msg.Source-1, core.START_VCBC_PROCESS_MSG)
 			if vcbc.MsgType(msg.Content.Type) == vcbc.MsgFinal || vcbc.MsgType(msg.Content.Type) == vcbc.MsgAnswer {
 				t.setValuesVCBC(msg.RealValue, [32]byte(msg.Value))
 			}
@@ -426,16 +429,11 @@ func (t *transport) ProcessReceivesVCBC(ctx context.Context, outerBuffer chan *p
 				ThresholdSig: tbls.Signature(msg.ThresholdSig),
 			}
 
-			// DEBUG
-			// handler -> inst buffer -> process -> trans buffer -> consensus
-			//if vcbc.MsgType(msg.Content.Type) == vcbc.MsgFinal {
-			//	log.Debug(ctx, "from inst buffer to trans buffer", z.Any("from node",msg.Source-1))
-			//}
-
 			select {
 			case <-ctx.Done():
 				return
 			case t.recvBufferVCBC <- newVCBCMsg:
+				core.RecordStep(msg.Source-1, core.FINISH_VCBC_PROCESS_MSG)
 			}
 		}
 	}

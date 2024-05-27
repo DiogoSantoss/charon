@@ -10,18 +10,37 @@ type Step int
 const (
 	START_LOAD Step = iota
 	FINISH_LOAD
+
 	START_PROPOSE
 	FINISH_PROPOSE
+
 	START_SETUP
 	FINISH_SETUP
+
 	START_CONSENSUS
 	FINISH_CONSENSUS
+
+	START_QBFT_PROCESS_MSG
+	FINISH_QBFT_PROCESS_MSG
+
+	START_VCBC_PROCESS_MSG
+	FINISH_VCBC_PROCESS_MSG
 	START_VCBC
 	FINISH_VCBC
+	START_VCBC_READY_SIG
+	FINISH_VCBC_READY_SIG
+	START_VCBC_FINAL_VERIFY
+	FINISH_VCBC_FINAL_VERIFY
+	START_VCBC_FINAL_AGGR
+	FINISH_VCBC_FINAL_AGGR
+
+	START_DELAY_ABA
+	FINISH_DELAY_ABA
 	START_ABA
 	FINISH_ABA
 	START_ABA_ROUND
 	FINISH_ABA_ROUND
+
 	START_COIN
 	FINISH_COIN
 )
@@ -113,6 +132,9 @@ func ComputerAverageRepeatedStep(stepStart, stepFinish Step, nodes int) (avgs []
 		arrByPeer = append(arrByPeer, peerAvg)
 	}
 
+	if len(arrByPeer) == 0 {
+		return avgs
+	}
 	// Given the array containing array of times for each step (start to finish)
 	// Compute the average across the first step from all peers, then the second step, and so on
 	for i := 0; i < len(arrByPeer[0]); i++ {

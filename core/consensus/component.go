@@ -583,6 +583,8 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 			return tbls.Verify(pubKey, data, signature)
 		},
 
+		CompleteView: true,
+
 		Nodes: len(c.peers),
 	}
 
@@ -630,6 +632,8 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 			}
 		},
 
+		DelayABA: true,
+
 		Nodes: len(c.peers),
 	}
 
@@ -663,13 +667,14 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 	}
 
 	tVCBC := vcbc.Transport[core.Duty, [32]byte]{
+		BroadcastABA: t.BroadcastABA,
 		Broadcast: t.BroadcastVCBC,
 		Unicast:   t.UnicastVCBC,
 		Receive:   t.recvBufferVCBC,
 	}
 
 	core.RecordStep(peerIdx, core.FINISH_SETUP)
-	testingAlea := true
+	testingAlea := false
 
 	if testingAlea {
 		// Run the algo, blocking until the context is cancelled.

@@ -149,12 +149,6 @@ func (s *Sender) SendAsync(parent context.Context, tcpNode host.Host, protoID pr
 		// Clone the context since parent context may be closed soon.
 		ctx := log.CopyFields(context.Background(), parent)
 
-		//err := withHandshakeRetry(func() error {
-		//	return withRelayRetry(func() error {
-		//		return Send(ctx, tcpNode, protoID, peerID, msg, opts...)
-		//	})
-		//})
-
 		err := withRelayRetry(func() error {
 			return Send(ctx, tcpNode, protoID, peerID, msg, opts...)
 		})

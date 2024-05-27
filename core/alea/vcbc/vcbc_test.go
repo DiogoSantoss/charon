@@ -234,6 +234,8 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 				return nil
 			}},
 
+			CompleteView: false,
+
 			Nodes: n,
 		}
 

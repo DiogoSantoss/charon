@@ -3,6 +3,7 @@ package alea
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 
@@ -18,7 +19,8 @@ type Definition[I any, V comparable] struct {
 	GetLeader func(instance I, agreementRound int64) int64
 	Decide    func(ctx context.Context, instance I, result V)
 
-	Nodes int
+	DelayABA bool
+	Nodes    int
 }
 
 func Run[I any, V comparable](
@@ -49,9 +51,9 @@ func Run[I any, V comparable](
 	var (
 		agreementRound    int64 = 0
 		valuePerPeer            = make(map[int64]V)
-		valuePerPeerCh          = make(chan struct{}) 
+		valuePerPeerCh          = make(chan struct{})
 		valuePerPeerMutex sync.Mutex
-		errCh = make(chan error)
+		errCh             = make(chan error)
 	)
 
 	dVCBC.Subs = append(dVCBC.Subs, func(ctx context.Context, result vcbc.VCBCResult[V]) error {
@@ -90,6 +92,32 @@ func Run[I any, V comparable](
 
 		// Agreement component
 		go func() {
+			// Optimization 3
+			if d.DelayABA {
+				core.RecordStep(process-1, core.START_DELAY_ABA)
+				thresholdValueReached := false
+				n, f := float64(d.Nodes), math.Floor(float64(d.Nodes-1)/3)
+				threshold := int(math.Floor((n+f)/2) + 1)
+
+				valuePerPeerMutex.Lock()
+				ch := valuePerPeerCh
+				valuePerPeerMutex.Unlock()
+
+				for !thresholdValueReached {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ch:
+						valuePerPeerMutex.Lock()
+						ch = valuePerPeerCh
+						if len(valuePerPeer) >= threshold {
+							thresholdValueReached = true
+						}
+						valuePerPeerMutex.Unlock()
+					}
+				}
+				core.RecordStep(process-1, core.FINISH_DELAY_ABA)
+			}
 			core.RecordStep(process-1, core.START_ABA)
 			for {
 				core.RecordStep(process-1, core.START_ABA_ROUND)
@@ -109,7 +137,7 @@ func Run[I any, V comparable](
 				if err != nil {
 					errCh <- err
 					log.Info(ctx, "Error in agreement component (ABA)", z.I64("id", process), z.Err(err))
-					return 
+					return
 				}
 				log.Info(ctx, "Alea result from ABA", z.I64("id", process), z.I64("agreementRound", agreementRound), z.Uint("result", uint(result)))
 
@@ -131,7 +159,7 @@ func Run[I any, V comparable](
 						for !exists {
 							select {
 							case <-ctx.Done():
-								log.Info(ctx,"Context done, did not decide", z.I64("id", process), z.I64("agreementRound", agreementRound))
+								log.Info(ctx, "Context done, did not decide", z.I64("id", process), z.I64("agreementRound", agreementRound))
 								return
 							case <-ch:
 								valuePerPeerMutex.Lock()
@@ -144,7 +172,7 @@ func Run[I any, V comparable](
 
 					log.Info(ctx, "Alea decided", z.I64("id", process), z.I64("agreementRound", agreementRound))
 					core.RecordStep(process-1, core.FINISH_ABA_ROUND)
-					core.RecordStep(process-1,core.FINISH_ABA)
+					core.RecordStep(process-1, core.FINISH_ABA)
 					d.Decide(ctx, instance, value)
 					break
 				}

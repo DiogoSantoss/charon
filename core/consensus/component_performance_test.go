@@ -51,7 +51,8 @@ func TestComponentPerformanceLatency(t *testing.T) {
 	// Consume metrics buffer
 	go core.ConsumePerformanceBuffer()
 
-	loads := []int{1, 40, 80, 120, 160, 200}
+	//loads := []int{1, 40, 80, 120, 160, 200}
+	loads := []int{1}
 
 	data := make(map[int][]float64)
 	for _, load := range loads {
@@ -124,19 +125,11 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 
 	pubkey := testutil.RandomCorePubKey(t)
 
-	var (
-		loadDuration      = make([]float64, 0)
-		proposeDuration   = make([]float64, 0)
-		setupDuration     = make([]float64, 0)
-		consensusDuration = make([]float64, 0)
-		vcbcDuration      = make([]float64, 0)
-		abaDuration       = make([]float64, 0)
-		abaRoundDuration  = make([]float64, 0)
-		coinDuration      = make([]float64, 0)
-	)
+	// Metrics
+	phasesDuration := make(map[string][]float64)
 
 	// Run test N times to average results
-	for it := 0; it < 5; it++ {
+	for it := 0; it < 100; it++ {
 
 		ctx, cancel = context.WithCancel(context.Background())
 		components = nil
@@ -196,14 +189,24 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 		core.RecordStep(0, core.FINISH_LOAD)
 		// Sleep to give time for all RecordSteps to execute since some only happen after cancel()
 		time.Sleep(100 * time.Millisecond)
-		loadDuration = append(loadDuration, core.ComputeAverageStep(core.START_LOAD, core.FINISH_LOAD, 1))
-		proposeDuration = append(proposeDuration, core.ComputeAverageStep(core.START_PROPOSE, core.FINISH_PROPOSE, n))
-		setupDuration = append(setupDuration, core.ComputeAverageStep(core.START_SETUP, core.FINISH_SETUP, n))
-		consensusDuration = append(consensusDuration, core.ComputeAverageStep(core.START_CONSENSUS, core.FINISH_CONSENSUS, n))
-		vcbcDuration = append(vcbcDuration, core.ComputeAverageStep(core.START_VCBC, core.FINISH_VCBC, n))
-		abaDuration = append(abaDuration, core.ComputeAverageStep(core.START_ABA, core.FINISH_ABA, n))
-		abaRoundDuration = append(abaRoundDuration, core.ComputeAverageStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
-		coinDuration = append(coinDuration, core.ComputeAverageStep(core.START_COIN, core.FINISH_COIN, n))
+
+		phasesDuration["load"] = append(phasesDuration["load"], core.ComputeAverageStep(core.START_LOAD, core.FINISH_LOAD, 1))
+		phasesDuration["propose"] = append(phasesDuration["propose"], core.ComputeAverageStep(core.START_PROPOSE, core.FINISH_PROPOSE, n))
+		phasesDuration["setup"] = append(phasesDuration["setup"], core.ComputeAverageStep(core.START_SETUP, core.FINISH_SETUP, n))
+		phasesDuration["consensus"] = append(phasesDuration["consensus"], core.ComputeAverageStep(core.START_CONSENSUS, core.FINISH_CONSENSUS, n))
+		
+		phasesDuration["qbft_msg"] = append(phasesDuration["qbft_msg"], core.ComputeAverageStep(core.START_QBFT_PROCESS_MSG, core.FINISH_QBFT_PROCESS_MSG, n))
+
+		phasesDuration["vcbc_msg"] = append(phasesDuration["vcbc_msg"], core.ComputeAverageStep(core.START_VCBC_PROCESS_MSG, core.FINISH_VCBC_PROCESS_MSG, n))
+		phasesDuration["vcbc"] = append(phasesDuration["vcbc"], core.ComputeAverageStep(core.START_VCBC, core.FINISH_VCBC, n))
+		phasesDuration["ready_sig"] = append(phasesDuration["ready_sig"], core.ComputeAverageStep(core.START_VCBC_READY_SIG, core.FINISH_VCBC_READY_SIG, n))
+		phasesDuration["final_verify"] = append(phasesDuration["final_verify"], core.ComputeAverageStep(core.START_VCBC_FINAL_VERIFY, core.FINISH_VCBC_FINAL_VERIFY, n))
+		phasesDuration["final_aggr"] = append(phasesDuration["final_aggr"], core.ComputeAverageStep(core.START_VCBC_FINAL_AGGR, core.FINISH_VCBC_FINAL_AGGR, n))
+
+		phasesDuration["delay_aba"] = append(phasesDuration["delay_aba"], core.ComputeAverageStep(core.START_DELAY_ABA, core.FINISH_DELAY_ABA, n))
+		phasesDuration["aba"] = append(phasesDuration["aba"], core.ComputeAverageStep(core.START_ABA, core.FINISH_ABA, n))
+		phasesDuration["abaRound"] = append(phasesDuration["abaRound"], core.ComputeAverageStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
+		phasesDuration["coin"] = append(phasesDuration["coin"], core.ComputeAverageStep(core.START_COIN, core.FINISH_COIN, n))
 
 		fmt.Println("ABA round durations:")
 		fmt.Println(core.ComputerAverageRepeatedStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
@@ -214,24 +217,48 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 
 	cancel()
 
-	avg, std := core.ComputeAverageAndStandardDeviation(loadDuration)
+	avg, std := core.ComputeAverageAndStandardDeviation(phasesDuration["load"])
 	fmt.Printf("Load Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(proposeDuration)
+	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["propose"])
 	fmt.Printf("Propose Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(setupDuration)
-	fmt.Printf("Setup Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(consensusDuration)
-	fmt.Printf("Consensus Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(vcbcDuration)
+	//avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["setup"])
+	//fmt.Printf("Setup Duration\nAvg: %f\nStd: %f\n", avg, std)
+	//avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["consensus"])
+	//fmt.Printf("Consensus Duration\nAvg: %f\nStd: %f\n", avg, std)
+
+	avg,std = core.ComputeAverageAndStandardDeviation(phasesDuration["qbft_msg"])
+	fmt.Printf("QBFT Process Message Duration\nAvg: %f\nStd: %f\n", avg, std)
+
+	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["vcbc_msg"])
+	fmt.Printf("VCBC Process Message Duration\nAvg: %f\nStd: %f\n", avg, std)
+	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["vcbc"])
 	fmt.Printf("VCBC Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(abaDuration)
+	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["ready_sig"])
+	fmt.Printf("Ready Signature Duration\nAvg: %f\nStd: %f\n", avg, std)
+	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["final_verify"])
+	fmt.Printf("Final Verify Duration\nAvg: %f\nStd: %f\n", avg, std)
+	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["final_aggr"])
+	fmt.Printf("Final Aggregate Duration\nAvg: %f\nStd: %f\n", avg, std)
+
+
+
+	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["delay_aba"])
+	fmt.Printf("Delay ABA Duration\nAvg: %f\nStd: %f\n", avg, std)
+	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["aba"])
 	fmt.Printf("ABA Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(abaRoundDuration)
+	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["abaRound"])
 	fmt.Printf("ABA Round Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(coinDuration)
+	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["coin"])
 	fmt.Printf("Coin Duration\nAvg: %f\nStd: %f\n", avg, std)
 
-	return loadDuration
+	// Store to file (in case something goes wrong we wont lose all data)
+	filename := "temp_latency"+fmt.Sprint(load)+".json"
+	path := "/home/diogo/dev/ist/thesis/graphs/data/"
+	file, _ := os.Create(path + filename)
+	defer file.Close()
+	json.NewEncoder(file).Encode(phasesDuration["load"])
+
+	return phasesDuration["load"]
 }
 
 func TestComponentPerformanceThroughput(t *testing.T) {
@@ -239,8 +266,8 @@ func TestComponentPerformanceThroughput(t *testing.T) {
 	go core.ConsumePerformanceBuffer()
 
 	// From 256 bytes to 1MB
-	//sizes := []int{256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072}
-	sizes := []int{262144}
+	sizes := []int{256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072}
+	//sizes := []int{256}
 	data := make(map[int][]float64)
 	for _, size := range sizes {
 		data[size] = testComponentPerformanceThroughput(t, size)
@@ -248,7 +275,7 @@ func TestComponentPerformanceThroughput(t *testing.T) {
 	}
 
 	// Store to file
-	filename := "temp_throughput_2.json"
+	filename := "temp_throughput.json"
 	path := "/home/diogo/dev/ist/thesis/graphs/data/"
 	file, _ := os.Create(path + filename)
 	defer file.Close()
@@ -338,7 +365,6 @@ func testComponentPerformanceThroughput(t *testing.T, size int) (measurements []
 		}()
 
 		for ; running; dutiesCompleted++ {
-			//fmt.Println("started", dutiesCompleted)
 
 			// Unblock propose
 			ctx, cancel = context.WithCancel(context.Background())
@@ -385,10 +411,16 @@ func testComponentPerformanceThroughput(t *testing.T, size int) (measurements []
 				}
 			}
 			cancel()
-			//fmt.Println("finished", dutiesCompleted)
 		}
-		measurements = append(measurements, float64(dutiesCompleted))
+		measurements = append(measurements, float64(dutiesCompleted/3))
 	}
+
+	// Store to file (in case something goes wrong we wont lose all data)
+	filename := "temp_throughput"+fmt.Sprint(size)+".json"
+	path := "/home/diogo/dev/ist/thesis/graphs/data/"
+	file, _ := os.Create(path + filename)
+	defer file.Close()
+	json.NewEncoder(file).Encode(measurements)
 
 	fmt.Println(measurements)
 

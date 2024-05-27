@@ -222,7 +222,13 @@ func testAlea(t *testing.T, p testParametersAlea) {
 			Decide: func(ctx context.Context, instance, result int64) {
 				outputChannel <- result
 			},
-			Nodes: n,
+			DelayABA: true,
+			Nodes:    n,
+		}
+
+		// Skip test
+		if defs.DelayABA == true && len(p.InputValue) < n {
+			t.Skip("Skipping test, DelayABA is true but not enough nodes will VCBC")
 		}
 
 		transABA := aba.Transport[int64]{
@@ -239,8 +245,8 @@ func testAlea(t *testing.T, p testParametersAlea) {
 
 		defsABA := aba.Definition{
 			AsyncCoin: true,
-			FastABA: true,
-			Nodes: n,
+			FastABA:   true,
+			Nodes:     n,
 		}
 
 		getCommonCoinName := func(instance, agreementRound, abaRound int64) ([]byte, error) {
@@ -259,7 +265,7 @@ func testAlea(t *testing.T, p testParametersAlea) {
 				return nil
 			},
 			Receive: commonCoinChannels[i],
-			Refill: commonCoinChannels[i],
+			Refill:  commonCoinChannels[i],
 		}
 
 		defsCoin := commoncoin.Definition[int64]{
@@ -297,6 +303,14 @@ func testAlea(t *testing.T, p testParametersAlea) {
 		}
 
 		transVCBC := vcbc.Transport[int64, int64]{
+			BroadcastABA: func(ctx context.Context, msg aba.ABAMessage[int64]) error {
+				for _, channel := range abaChannels {
+					if channel != nil {
+						channel <- msg
+					}
+				}
+				return nil
+			},
 			Broadcast: func(ctx context.Context, msg vcbc.VCBCMessage[int64, int64]) error {
 				for _, channel := range vcbcChannels {
 					// Don't send final to requester to simulate lack of final message
@@ -342,6 +356,8 @@ func testAlea(t *testing.T, p testParametersAlea) {
 			VerifyAggregateSignature: func(data []byte, signature tbls.Signature) error {
 				return tbls.Verify(public, data, signature)
 			},
+			CompleteView: true,
+
 			// Missing output as it is defined inside Alea
 			Nodes: n,
 		}
