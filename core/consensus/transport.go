@@ -5,7 +5,6 @@ package consensus
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"sync"
 	"time"
 
@@ -31,9 +30,9 @@ type transport struct {
 	recvBuffer chan qbft.Msg[core.Duty, [32]byte] // Instance inner receive buffer.
 	sniffer    *sniffer
 
-	recvBufferCoin chan commoncoin.CommonCoinMessage[core.Duty] // Common coin inner receive buffer.
-	recvBufferABA  chan aba.ABAMessage[core.Duty]               // ABA inner receive buffer.
-	recvBufferVCBC chan vcbc.VCBCMessage[core.Duty, [32]byte]   // VCBC inner receive buffer.
+	recvBufferCoin chan commoncoin.CommonCoinMsg[core.Duty] // Common coin inner receive buffer.
+	recvBufferABA  chan aba.ABAMsg[core.Duty]               // ABA inner receive buffer.
+	recvBufferVCBC chan vcbc.VCBCMsg[core.Duty, [32]byte]                         // VCBC2 inner receive buffer.
 
 	// Mutable state
 	valueMu sync.Mutex
@@ -152,13 +151,25 @@ func (t *transport) Broadcast(ctx context.Context, typ qbft.MsgType, duty core.D
 	return nil
 }
 
-func (t *transport) BroadcastCoin(ctx context.Context, msg commoncoin.CommonCoinMessage[core.Duty]) error {
+func (t *transport) BroadcastCoin(ctx context.Context, source int64, instance core.Duty, agreementRound, abaRound int64, sig tbls.Signature) error {
+
+	msg := &pbv1.CommonCoinMsg{
+		Source:         source,
+		Duty:           core.DutyToProto(instance),
+		AgreementRound: agreementRound,
+		AbaRound:       abaRound,
+		Sig:            sig[:],
+	}
+
+	commonCoinMsg := commonCoinMsg{
+		msg: msg,
+	}
 
 	// Send to self (async since buffer is blocking).
 	go func() {
 		select {
 		case <-ctx.Done():
-		case t.recvBufferCoin <- msg:
+		case t.recvBufferCoin <- commonCoinMsg:
 			// TODO sniff
 		}
 	}()
@@ -169,13 +180,7 @@ func (t *transport) BroadcastCoin(ctx context.Context, msg commoncoin.CommonCoin
 			continue
 		}
 
-		err := t.component.sender.SendAsync(ctx, t.component.tcpNode, "/charon/consensus/aleabft/commoncoin/0.1.0", p.ID, &pbv1.CommonCoinMsg{
-			Source:         msg.Source,
-			Duty:           core.DutyToProto(msg.Instance),
-			AgreementRound: msg.AgreementRound,
-			AbaRound:       msg.AbaRound,
-			Sig:            msg.Sig[:],
-		})
+		err := t.component.sender.SendAsync(ctx, t.component.tcpNode, "/charon/consensus/aleabft/commoncoin/0.1.0", p.ID, msg)
 		if err != nil {
 			return err
 		}
@@ -184,13 +189,34 @@ func (t *transport) BroadcastCoin(ctx context.Context, msg commoncoin.CommonCoin
 	return nil
 }
 
-func (t *transport) BroadcastABA(ctx context.Context, msg aba.ABAMessage[core.Duty]) error {
+func (t *transport) BroadcastABA(ctx context.Context, source int64, msgType aba.MsgType,
+	duty core.Duty, agreementRound, round int64, estimative byte,
+	values map[byte]struct{}) error {
+
+	v := make([]int32, 0)
+	for b := range values {
+		v = append(v, int32(b))
+	}
+
+	msg := &pbv1.ABAMsg{
+		Type:           int64(msgType),
+		Source:         source,
+		Duty:           core.DutyToProto(duty),
+		AgreementRound: agreementRound,
+		Round:          round,
+		Estimative:     int32(estimative),
+		Values:         v,
+	}
+
+	abaMsg := abaMsg{
+		msg: msg,
+	}
 
 	// Send to self (async since buffer is blocking).
 	go func() {
 		select {
 		case <-ctx.Done():
-		case t.recvBufferABA <- msg:
+		case t.recvBufferABA <- abaMsg:
 			// TODO sniff
 		}
 	}()
@@ -201,20 +227,7 @@ func (t *transport) BroadcastABA(ctx context.Context, msg aba.ABAMessage[core.Du
 			continue
 		}
 
-		v := make([]int32, 0)
-		for b := range msg.Values {
-			v = append(v, int32(b))
-		}
-
-		err := t.component.sender.SendAsync(ctx, t.component.tcpNode, "/charon/consensus/aleabft/aba/0.1.0", p.ID, &pbv1.ABAMsg{
-			Type:           int64(msg.MsgType),
-			Source:         msg.Source,
-			Duty:           core.DutyToProto(msg.Instance),
-			AgreementRound: msg.AgreementRound,
-			Round:          msg.Round,
-			Estimative:     int32(msg.Estimative),
-			Values:         v,
-		})
+		err := t.component.sender.SendAsync(ctx, t.component.tcpNode, "/charon/consensus/aleabft/aba/0.1.0", p.ID, msg)
 		if err != nil {
 			return err
 		}
@@ -223,21 +236,47 @@ func (t *transport) BroadcastABA(ctx context.Context, msg aba.ABAMessage[core.Du
 	return nil
 }
 
-func (t *transport) BroadcastVCBC(ctx context.Context, msg vcbc.VCBCMessage[core.Duty, [32]byte]) error {
-
-	if msg.Content.MsgType == vcbc.MsgFinal {
-		value, err := t.getValue(msg.Value)
+func (t *transport) BroadcastVCBC(
+	ctx context.Context, 
+	source int64, msgType vcbc.MsgType, tag string, valueHash []byte,
+	duty core.Duty, value [32]byte,  
+	partialSig tbls.Signature, thresholdSig tbls.Signature,
+) error {
+	
+	var realValue *anypb.Any
+	if msgType == vcbc.MsgFinal {
+		value, err := t.getValue(value)
 		if err != nil {
 			return err
 		}
-		msg.RealValue = value
+		realValue = value
+	}
+
+	content := &pbv1.VCBCMsgContent{
+		Type:      int64(msgType),
+		Tag:       tag,
+		ValueHash: valueHash,
+	}
+
+	msg := &pbv1.VCBCMsg{
+		Source:       source,
+		Content:      content,
+		Duty:         core.DutyToProto(duty),
+		Value:        value[:],
+		PartialSig:   partialSig[:],
+		ThresholdSig: thresholdSig[:],
+		RealValue:    realValue,
+	}
+
+	vcbcMsg := vcbcMsg{
+		msg: msg,
 	}
 
 	// Send to self (async since buffer is blocking).
 	go func() {
 		select {
 		case <-ctx.Done():
-		case t.recvBufferVCBC <- msg:
+		case t.recvBufferVCBC <- vcbcMsg:
 			// TODO sniff
 		}
 	}()
@@ -248,77 +287,67 @@ func (t *transport) BroadcastVCBC(ctx context.Context, msg vcbc.VCBCMessage[core
 			continue
 		}
 
-		content := &pbv1.VCBCMsgContent{
-			Type:      int64(msg.Content.MsgType),
-			Tag:       msg.Content.Tag,
-			ValueHash: msg.Content.ValueHash,
-		}
 
-		err := t.component.sender.SendAsync(ctx, t.component.tcpNode, "/charon/consensus/aleabft/vcbc/0.1.0", p.ID, &pbv1.VCBCMsg{
-			Source:       msg.Source,
-			Content:      content,
-			Duty:         core.DutyToProto(msg.Instance),
-			Value:        msg.Value[:],
-			PartialSig:   msg.PartialSig[:],
-			ThresholdSig: msg.ThresholdSig[:],
-			RealValue:    msg.RealValue,
-		})
+		err := t.component.sender.SendAsync(ctx, t.component.tcpNode, "/charon/consensus/aleabft/vcbc/0.1.0", p.ID, msg)
 		if err != nil {
 			return err
 		}
-
-		// DEBUG
-		//if vcbc.MsgType(content.Type) == vcbc.MsgFinal {
-		//	log.Debug(ctx, "sending final to", z.Any("to node", i))
-		//}
 	}
 
 	return nil
 }
 
-func (t *transport) UnicastVCBC(ctx context.Context, target int64, msg vcbc.VCBCMessage[core.Duty, [32]byte]) error {
+func (t *transport) UnicastVCBC(
+	ctx context.Context, target int64,
+	source int64, msgType vcbc.MsgType, tag string, valueHash []byte,
+	duty core.Duty, value [32]byte,
+	partialSig tbls.Signature, thresholdSig tbls.Signature,
+) error {
 
-	if msg.Content.MsgType == vcbc.MsgAnswer {
-		value, err := t.getValue(msg.Value)
+	var realValue *anypb.Any
+	if msgType == vcbc.MsgAnswer {
+		value, err := t.getValue(value)
 		if err != nil {
 			return err
 		}
-		msg.RealValue = value
+		realValue = value
 	}
 
 	id, _ := t.component.getPeerIdx()
+
+	content := &pbv1.VCBCMsgContent{
+		Type:      int64(msgType),
+		Tag:       tag,
+		ValueHash: valueHash,
+	}
+	
+	msg := &pbv1.VCBCMsg{
+		Source:       source,
+		Content:      content,
+		Duty:         core.DutyToProto(duty),
+		Value:        value[:],
+		PartialSig:   partialSig[:],
+		ThresholdSig: thresholdSig[:],
+		RealValue:    realValue,
+	}
+
+	vcbcMsg := vcbcMsg{
+		msg: msg,
+	}
+
 	if id == (target - 1) {
 		// Send to self (async since buffer is blocking).
 		go func() {
 			select {
 			case <-ctx.Done():
-			case t.recvBufferVCBC <- msg:
+			case t.recvBufferVCBC <- vcbcMsg:
 				// TODO sniff
 			}
 		}()
 	} else {
-
 		peer := t.component.peers[target-1]
 
-		var content *pbv1.VCBCMsgContent
-
-		if !reflect.ValueOf(msg.Content).IsZero() {
-			content = &pbv1.VCBCMsgContent{
-				Type:      int64(msg.Content.MsgType),
-				Tag:       msg.Content.Tag,
-				ValueHash: msg.Content.ValueHash,
-			}
-		}
-
-		err := t.component.sender.SendAsync(ctx, t.component.tcpNode, "/charon/consensus/aleabft/vcbc/0.1.0", peer.ID, &pbv1.VCBCMsg{
-			Source:       msg.Source,
-			Content:      content,
-			Duty:         core.DutyToProto(msg.Instance),
-			Value:        msg.Value[:],
-			PartialSig:   msg.PartialSig[:],
-			ThresholdSig: msg.ThresholdSig[:],
-			RealValue:    msg.RealValue,
-		})
+		err := t.component.sender.SendAsync(ctx, t.component.tcpNode, "/charon/consensus/aleabft/vcbc/0.1.0", peer.ID, msg)
 		if err != nil {
 			return err
 		}
@@ -334,7 +363,6 @@ func (t *transport) ProcessReceives(ctx context.Context, outerBuffer chan msg) {
 		case <-ctx.Done():
 			return
 		case msg := <-outerBuffer:
-			core.RecordStep(msg.msg.PeerIdx, core.START_QBFT_PROCESS_MSG)
 			t.setValues(msg)
 
 			select {
@@ -342,98 +370,59 @@ func (t *transport) ProcessReceives(ctx context.Context, outerBuffer chan msg) {
 				return
 			case t.recvBuffer <- msg:
 				t.sniffer.Add(msg.ToConsensusMsg())
-				core.RecordStep(msg.msg.PeerIdx, core.FINISH_QBFT_PROCESS_MSG)
 			}
 		}
 	}
 }
 
-func (t *transport) ProcessReceivesCoin(ctx context.Context, outerBuffer chan *pbv1.CommonCoinMsg) {
+func (t *transport) ProcessReceivesCoin(ctx context.Context, outerBuffer chan commonCoinMsg) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case msg := <-outerBuffer:
-			newCommonCoinMsg := commoncoin.CommonCoinMessage[core.Duty]{
-				Source:         msg.Source,
-				Instance:       core.DutyFromProto(msg.Duty),
-				AgreementRound: msg.AgreementRound,
-				AbaRound:       msg.AbaRound,
-				Sig:            tbls.Signature(msg.GetSig()),
-			}
+		
 			// TODO Why another select
 			select {
 			case <-ctx.Done():
 				return
-			case t.recvBufferCoin <- newCommonCoinMsg:
+			case t.recvBufferCoin <- msg:
 			}
 
 		}
 	}
 }
 
-func (t *transport) ProcessReceivesABA(ctx context.Context, outerBuffer chan *pbv1.ABAMsg) {
+func (t *transport) ProcessReceivesABA(ctx context.Context, outerBuffer chan abaMsg) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case msg := <-outerBuffer:
-			values := make(map[byte]struct{})
-			for _, v := range msg.Values {
-				values[byte(v)] = struct{}{}
-			}
-			newABAMsg := aba.ABAMessage[core.Duty]{
-				MsgType:        aba.MsgType(msg.GetType()),
-				Source:         msg.Source,
-				Instance:       core.DutyFromProto(msg.Duty),
-				AgreementRound: msg.AgreementRound,
-				Round:          msg.Round,
-				Estimative:     byte(msg.Estimative),
-				Values:         values,
-			}
 			// TODO Why another select
 			select {
 			case <-ctx.Done():
 				return
-			case t.recvBufferABA <- newABAMsg:
+			case t.recvBufferABA <- msg:
 			}
 
 		}
 	}
 }
 
-func (t *transport) ProcessReceivesVCBC(ctx context.Context, outerBuffer chan *pbv1.VCBCMsg) {
+func (t *transport) ProcessReceivesVCBC(ctx context.Context, outerBuffer chan vcbcMsg) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case msg := <-outerBuffer:
-
-			core.RecordStep(msg.Source-1, core.START_VCBC_PROCESS_MSG)
-			if vcbc.MsgType(msg.Content.Type) == vcbc.MsgFinal || vcbc.MsgType(msg.Content.Type) == vcbc.MsgAnswer {
-				t.setValuesVCBC(msg.RealValue, [32]byte(msg.Value))
+			if msg.MsgType() == vcbc.MsgFinal || msg.MsgType() == vcbc.MsgAnswer {
+				t.setValuesVCBC(msg.RealValue(), msg.Value())
 			}
-
-			content := vcbc.VCBCMessageContent{
-				MsgType:   vcbc.MsgType(msg.Content.GetType()),
-				Tag:       msg.Content.GetTag(),
-				ValueHash: msg.Content.GetValueHash(),
-			}
-
-			newVCBCMsg := vcbc.VCBCMessage[core.Duty, [32]byte]{
-				Source:       msg.Source,
-				Content:      content,
-				Instance:     core.DutyFromProto(msg.Duty),
-				Value:        [32]byte(msg.Value),
-				PartialSig:   tbls.Signature(msg.PartialSig),
-				ThresholdSig: tbls.Signature(msg.ThresholdSig),
-			}
-
 			select {
 			case <-ctx.Done():
 				return
-			case t.recvBufferVCBC <- newVCBCMsg:
-				core.RecordStep(msg.Source-1, core.FINISH_VCBC_PROCESS_MSG)
+			case t.recvBufferVCBC <- msg:
 			}
 		}
 	}

@@ -8,41 +8,33 @@ import (
 type Step int
 
 const (
+
+	// Measure the time it takes for a given load (N duties)
 	START_LOAD Step = iota
 	FINISH_LOAD
 
-	START_PROPOSE
-	FINISH_PROPOSE
-
+	// From c.Propose to just before alea.Run / qbft.Run
 	START_SETUP
 	FINISH_SETUP
 
-	START_CONSENSUS
-	FINISH_CONSENSUS
-
-	START_QBFT_PROCESS_MSG
-	FINISH_QBFT_PROCESS_MSG
-
-	START_VCBC_PROCESS_MSG
-	FINISH_VCBC_PROCESS_MSG
-	START_VCBC
-	FINISH_VCBC
-	START_VCBC_READY_SIG
-	FINISH_VCBC_READY_SIG
-	START_VCBC_FINAL_VERIFY
-	FINISH_VCBC_FINAL_VERIFY
-	START_VCBC_FINAL_AGGR
-	FINISH_VCBC_FINAL_AGGR
-
+	// Measure how long it takes for threshold number of VCBCs to finish
+	// and start ABA
 	START_DELAY_ABA
 	FINISH_DELAY_ABA
+
+	// Measure how long it takes for ABA to reach consensus
 	START_ABA
 	FINISH_ABA
-	START_ABA_ROUND
-	FINISH_ABA_ROUND
 
-	START_COIN
-	FINISH_COIN
+	// Calling subscribers of the consensus
+	START_DECIDE
+	FINISH_DECIDE
+
+	// Time it takes for broadcast of send and 
+	// receive threshold number of ready messages
+	START_VCBC_SEND
+	FINISH_VCBC_SEND
+
 )
 
 type BufferEntry struct {
@@ -78,6 +70,10 @@ func ClearMetrics() {
 	metrics = make(map[int64]map[Step][]time.Time)
 }
 
+func GetMetrics(step Step, peer int64) []time.Time {
+	return metrics[peer][step]
+}
+
 func ComputeAverage(values []float64) float64 {
 	var avg float64 = 0
 	for _, v := range values {
@@ -92,6 +88,7 @@ func ComputeAverage(values []float64) float64 {
 // The simple case is for "single" step where start and finish are only called once.
 // However some steps may be called multiple times and we also want to average that.
 func ComputeAverageStep(stepStart, stepFinish Step, nodes int) (avg float64) {
+
 	for _, metric := range metrics {
 
 		start := metric[stepStart]

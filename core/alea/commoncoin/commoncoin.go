@@ -12,11 +12,18 @@ import (
 // CommonCoin implementation from the paper: "The Honey Badger of BFT Protocols"
 // Link: https://eprint.iacr.org/2016/199.pdf (Figure 12)
 
+type CommonCoinMsg[I any] interface {
+	Source() int64
+	Instance() I
+	AgreementRound() int64
+	AbaRound() int64
+	Sig() tbls.Signature
+}
+
 type Transport[I any] struct {
-	Broadcast func(ctx context.Context, msg CommonCoinMessage[I]) error
-	Unicast   func(ctx context.Context, target int64, msg CommonCoinMessage[I]) error
-	Receive   <-chan CommonCoinMessage[I]
-	Refill    chan<- CommonCoinMessage[I]
+	Broadcast func(ctx context.Context, source int64, instance I, agreementRound, abaRound int64, sig tbls.Signature) error
+	Receive   <-chan CommonCoinMsg[I]
+	Refill    chan<- CommonCoinMsg[I]
 }
 
 type Definition[I any] struct {
@@ -35,14 +42,6 @@ type Definition[I any] struct {
 // Faulty returns the maximum number of faulty nodes supported in the system
 func (d Definition[I]) Faulty() int {
 	return int(math.Floor(float64(d.Nodes-1) / 3))
-}
-
-type CommonCoinMessage[I any] struct {
-	Source         int64
-	Instance       I     // Duty
-	AgreementRound int64 // Alea round
-	AbaRound       int64 // ABA round
-	Sig            tbls.Signature
 }
 
 // SampleCoin executes the common coin protocol
@@ -66,13 +65,7 @@ func SampleCoin[I any](ctx context.Context, d Definition[I], t Transport[I], ins
 			return 0, err
 		}
 
-		err = t.Broadcast(ctx, CommonCoinMessage[I]{
-			Source:         process,
-			Instance:       instance,
-			AgreementRound: agreementRound,
-			AbaRound:       abaRound,
-			Sig:            signature,
-		})
+		err = t.Broadcast(ctx, process, instance, agreementRound, abaRound, signature)
 		if err != nil {
 			return 0, err
 		}
@@ -84,24 +77,24 @@ func SampleCoin[I any](ctx context.Context, d Definition[I], t Transport[I], ins
 
 			// Message from past agreement round, don't need to handle it since
 			// ABA instances have already finished meaning that CommonCoin instances also finished
-			if msg.AgreementRound < agreementRound {
+			if msg.AgreementRound() < agreementRound {
 				continue
 			}
 
 			// Need to refill since its possible to be running simultaneously with other instances
-			if msg.AgreementRound > agreementRound || msg.AbaRound != abaRound {
+			if msg.AgreementRound() > agreementRound || msg.AbaRound() != abaRound {
 				go func() { t.Refill <- msg }()
 				continue
 			}
 
 			// verify signature validity
-			err := d.VerifySignature(msg.Source, coinName, msg.Sig)
+			err := d.VerifySignature(msg.Source(), coinName, msg.Sig())
 			if err != nil {
-				log.Debug(ctx, "Node id received invalid signature from source", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound), z.I64("source", msg.Source))
+				log.Debug(ctx, "Node id received invalid signature from source", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound), z.I64("source", msg.Source()))
 				continue
 			}
 
-			signatures[int(msg.Source)] = msg.Sig
+			signatures[int(msg.Source())] = msg.Sig()
 			if len(signatures) >= int(d.Faulty()+1) {
 
 				result, err := d.GetCommonCoinResult(ctx, instance, agreementRound, abaRound, signatures)

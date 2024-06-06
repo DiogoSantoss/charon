@@ -11,8 +11,11 @@ import (
 	"github.com/obolnetwork/charon/app/errors"
 	"github.com/obolnetwork/charon/app/k1util"
 	"github.com/obolnetwork/charon/core"
+	"github.com/obolnetwork/charon/core/alea/aba"
+	"github.com/obolnetwork/charon/core/alea/vcbc"
 	pbv1 "github.com/obolnetwork/charon/core/corepb/v1"
 	"github.com/obolnetwork/charon/core/qbft"
+	"github.com/obolnetwork/charon/tbls"
 )
 
 // newMsg returns a new msg.
@@ -59,6 +62,123 @@ func newMsg(pbMsg *pbv1.QBFTMsg, justification []*pbv1.QBFTMsg, values map[[32]b
 		justificationProtos: justification,
 		justification:       justImpls,
 	}, nil
+}
+
+// Implements CommonCoinMsg interface
+type commonCoinMsg struct {
+	msg *pbv1.CommonCoinMsg
+}
+
+func (m commonCoinMsg) Source() int64 {
+	return m.msg.Source
+}
+
+func (m commonCoinMsg) Instance() core.Duty {
+	return core.DutyFromProto(m.msg.Duty)
+}
+
+func (m commonCoinMsg) AgreementRound() int64 {
+	return m.msg.AgreementRound
+}
+
+func (m commonCoinMsg) AbaRound() int64 {
+	return m.msg.AbaRound
+}
+
+func (m commonCoinMsg) Sig() tbls.Signature {
+	return tbls.Signature(m.msg.Sig)
+}
+
+// Implements ABAMsg interface
+type abaMsg struct {
+	msg *pbv1.ABAMsg
+}
+
+func (m abaMsg) Source() int64 {
+	return m.msg.Source
+}
+
+func (m abaMsg) MsgType() aba.MsgType {
+	return aba.MsgType(m.msg.Type)
+}
+
+func (m abaMsg) Instance() core.Duty {
+	return core.DutyFromProto(m.msg.Duty)
+}
+
+func (m abaMsg) AgreementRound() int64 {
+	return m.msg.AgreementRound
+}
+
+func (m abaMsg) Round() int64 {
+	return m.msg.Round
+}
+
+func (m abaMsg) Estimative() byte {
+	return byte(m.msg.Estimative)
+}
+
+func (m abaMsg) Values() map[byte]struct{} {
+	values := make(map[byte]struct{})
+	for _, v := range m.msg.Values {
+		values[byte(v)] = struct{}{}
+	}
+	return values
+}
+
+func (m abaMsg) CloneToInit() aba.ABAMsg[core.Duty] {
+	return abaMsg{
+		msg: &pbv1.ABAMsg{
+			Source: m.msg.Source,
+			Type:   int64(aba.MsgInit),
+			Duty:   m.msg.Duty,
+			AgreementRound: m.msg.AgreementRound,
+			Round:  m.msg.Round,
+			Estimative: m.msg.Estimative,
+			Values: m.msg.Values,
+		},
+	}
+}
+
+// Implement VCBCMsg interface
+type vcbcMsg struct {
+	msg *pbv1.VCBCMsg
+}
+
+func (m vcbcMsg) Source() int64 {
+	return m.msg.Source
+}
+
+func (m vcbcMsg) MsgType() vcbc.MsgType {
+	return vcbc.MsgType(m.msg.Content.Type)
+}
+
+func (m vcbcMsg) Tag() string {
+	return m.msg.Content.Tag
+}
+
+func (m vcbcMsg) ValueHash() []byte {
+	return m.msg.Content.ValueHash
+}
+
+func (m vcbcMsg) Instance() core.Duty {
+	return core.DutyFromProto(m.msg.Duty)
+}	
+
+func (m vcbcMsg) Value() [32]byte {
+	return [32]byte(m.msg.Value)
+}
+
+func (m vcbcMsg) RealValue() *anypb.Any {
+	return m.msg.RealValue
+}
+
+func (m vcbcMsg) PartialSig() tbls.Signature {
+	return tbls.Signature(m.msg.PartialSig)
+}
+
+func (m vcbcMsg) ThresholdSig() tbls.Signature {
+	return tbls.Signature(m.msg.ThresholdSig)
 }
 
 // msg wraps *pbv1.QBFTMsg and justifications and implements qbft.Msg[core.Duty, [32]byte].

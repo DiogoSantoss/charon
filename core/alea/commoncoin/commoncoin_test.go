@@ -113,9 +113,9 @@ func testCommonCoin(t *testing.T, p testParametersCoin) {
 	}
 
 	// Channels for communication
-	channels := make([]chan CommonCoinMessage[int64], n)
+	channels := make([]chan CommonCoinMsg[int64], n)
 	for i := 0; i < n; i++ {
-		channels[i] = make(chan CommonCoinMessage[int64], n)
+		channels[i] = make(chan CommonCoinMsg[int64], n)
 	}
 
 	// Store results
@@ -134,7 +134,16 @@ func testCommonCoin(t *testing.T, p testParametersCoin) {
 		id := i + 1
 
 		trans := Transport[int64]{
-			Broadcast: func(ctx context.Context, msg CommonCoinMessage[int64]) error {
+			Broadcast: func(ctx context.Context, source int64, instance int64, agreementRound, abaRound int64, sig tbls.Signature) error {
+				
+				msg := msg{
+					source:         source,
+					instance:       instance,
+					agreementRound: agreementRound,
+					abaRound:       abaRound,
+					sig:            sig,
+				}
+
 				for _, channel := range channels {
 					channel <- msg
 				}
@@ -242,4 +251,32 @@ func testCommonCoin(t *testing.T, p testParametersCoin) {
 
 		return true
 	})
+}
+
+type msg struct {
+	source         int64
+	instance       int64
+	agreementRound int64
+	abaRound       int64
+	sig            tbls.Signature
+}
+
+func (m msg) Source() int64 {
+	return m.source
+}
+
+func (m msg) Instance() int64 {
+	return m.instance
+}
+
+func (m msg) AgreementRound() int64 {
+	return m.agreementRound
+}
+
+func (m msg) AbaRound() int64 {
+	return m.abaRound
+}
+
+func (m msg) Sig() tbls.Signature {
+	return m.sig
 }

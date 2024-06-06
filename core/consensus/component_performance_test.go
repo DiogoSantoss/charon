@@ -129,7 +129,7 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 	phasesDuration := make(map[string][]float64)
 
 	// Run test N times to average results
-	for it := 0; it < 100; it++ {
+	for it := 0; it < 5; it++ {
 
 		ctx, cancel = context.WithCancel(context.Background())
 		components = nil
@@ -152,13 +152,11 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 			// Propose values (blocking)
 			for i, c := range components {
 				go func(ctx context.Context, i int, c *consensus.Component) {
-					core.RecordStep(int64(i), core.START_PROPOSE)
 					runErrs <- c.Propose(
 						log.WithCtx(ctx, z.Int("node", i), z.Str("peer", p2p.PeerName(hosts[i].ID()))),
 						core.Duty{Type: core.DutyAttester, Slot: uint64(l)},
 						core.UnsignedDataSet{pubkey: testutil.RandomCoreAttestationData(t)},
 					)
-					core.RecordStep(int64(i), core.FINISH_PROPOSE)
 				}(ctx, i, c)
 			}
 
@@ -187,29 +185,11 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 		}
 		cancel()
 		core.RecordStep(0, core.FINISH_LOAD)
+
 		// Sleep to give time for all RecordSteps to execute since some only happen after cancel()
 		time.Sleep(100 * time.Millisecond)
 
 		phasesDuration["load"] = append(phasesDuration["load"], core.ComputeAverageStep(core.START_LOAD, core.FINISH_LOAD, 1))
-		phasesDuration["propose"] = append(phasesDuration["propose"], core.ComputeAverageStep(core.START_PROPOSE, core.FINISH_PROPOSE, n))
-		phasesDuration["setup"] = append(phasesDuration["setup"], core.ComputeAverageStep(core.START_SETUP, core.FINISH_SETUP, n))
-		phasesDuration["consensus"] = append(phasesDuration["consensus"], core.ComputeAverageStep(core.START_CONSENSUS, core.FINISH_CONSENSUS, n))
-		
-		phasesDuration["qbft_msg"] = append(phasesDuration["qbft_msg"], core.ComputeAverageStep(core.START_QBFT_PROCESS_MSG, core.FINISH_QBFT_PROCESS_MSG, n))
-
-		phasesDuration["vcbc_msg"] = append(phasesDuration["vcbc_msg"], core.ComputeAverageStep(core.START_VCBC_PROCESS_MSG, core.FINISH_VCBC_PROCESS_MSG, n))
-		phasesDuration["vcbc"] = append(phasesDuration["vcbc"], core.ComputeAverageStep(core.START_VCBC, core.FINISH_VCBC, n))
-		phasesDuration["ready_sig"] = append(phasesDuration["ready_sig"], core.ComputeAverageStep(core.START_VCBC_READY_SIG, core.FINISH_VCBC_READY_SIG, n))
-		phasesDuration["final_verify"] = append(phasesDuration["final_verify"], core.ComputeAverageStep(core.START_VCBC_FINAL_VERIFY, core.FINISH_VCBC_FINAL_VERIFY, n))
-		phasesDuration["final_aggr"] = append(phasesDuration["final_aggr"], core.ComputeAverageStep(core.START_VCBC_FINAL_AGGR, core.FINISH_VCBC_FINAL_AGGR, n))
-
-		phasesDuration["delay_aba"] = append(phasesDuration["delay_aba"], core.ComputeAverageStep(core.START_DELAY_ABA, core.FINISH_DELAY_ABA, n))
-		phasesDuration["aba"] = append(phasesDuration["aba"], core.ComputeAverageStep(core.START_ABA, core.FINISH_ABA, n))
-		phasesDuration["abaRound"] = append(phasesDuration["abaRound"], core.ComputeAverageStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
-		phasesDuration["coin"] = append(phasesDuration["coin"], core.ComputeAverageStep(core.START_COIN, core.FINISH_COIN, n))
-
-		fmt.Println("ABA round durations:")
-		fmt.Println(core.ComputerAverageRepeatedStep(core.START_ABA_ROUND, core.FINISH_ABA_ROUND, n))
 
 		// Record metrics per iteration
 		core.ClearMetrics()
@@ -217,39 +197,12 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 
 	cancel()
 
-	avg, std := core.ComputeAverageAndStandardDeviation(phasesDuration["load"])
-	fmt.Printf("Load Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["propose"])
-	fmt.Printf("Propose Duration\nAvg: %f\nStd: %f\n", avg, std)
-	//avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["setup"])
-	//fmt.Printf("Setup Duration\nAvg: %f\nStd: %f\n", avg, std)
-	//avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["consensus"])
-	//fmt.Printf("Consensus Duration\nAvg: %f\nStd: %f\n", avg, std)
+	phases := []string{"load"}
 
-	avg,std = core.ComputeAverageAndStandardDeviation(phasesDuration["qbft_msg"])
-	fmt.Printf("QBFT Process Message Duration\nAvg: %f\nStd: %f\n", avg, std)
-
-	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["vcbc_msg"])
-	fmt.Printf("VCBC Process Message Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["vcbc"])
-	fmt.Printf("VCBC Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["ready_sig"])
-	fmt.Printf("Ready Signature Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["final_verify"])
-	fmt.Printf("Final Verify Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["final_aggr"])
-	fmt.Printf("Final Aggregate Duration\nAvg: %f\nStd: %f\n", avg, std)
-
-
-
-	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["delay_aba"])
-	fmt.Printf("Delay ABA Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["aba"])
-	fmt.Printf("ABA Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["abaRound"])
-	fmt.Printf("ABA Round Duration\nAvg: %f\nStd: %f\n", avg, std)
-	avg, std = core.ComputeAverageAndStandardDeviation(phasesDuration["coin"])
-	fmt.Printf("Coin Duration\nAvg: %f\nStd: %f\n", avg, std)
+	for _, phase := range phases {
+		avg, std := core.ComputeAverageAndStandardDeviation(phasesDuration[phase])
+		fmt.Printf("%s Duration\nAvg: %f\nStd: %f\n", phase, avg, std)
+	}
 
 	// Store to file (in case something goes wrong we wont lose all data)
 	filename := "temp_latency"+fmt.Sprint(load)+".json"
@@ -340,7 +293,7 @@ func testComponentPerformanceThroughput(t *testing.T, size int) (measurements []
 
 	d := core.PayloadWithSize(size)
 
-	for it := 0; it < 5; it++ {
+	for it := 0; it < 10; it++ {
 
 		components = nil
 

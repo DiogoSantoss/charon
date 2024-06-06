@@ -49,23 +49,27 @@ func Run[I any, V comparable](
 
 	// === State ===
 	var (
+		// Current agreement round
 		agreementRound    int64 = 0
+
+		// Received value per peer from VCBC
 		valuePerPeer            = make(map[int64]V)
+		// Channel to signal when a new value is received
 		valuePerPeerCh          = make(chan struct{})
+		// Mutex to protect valuePerPeer and valuePerPeerCh
 		valuePerPeerMutex sync.Mutex
+
+		// Error channel to receive errors from broadcast and agreement components
 		errCh             = make(chan error)
 	)
 
+	// Results from VCBC are stored in a peer id indexed map
+	// We use a channel to signal when a new value is received 
 	dVCBC.Subs = append(dVCBC.Subs, func(ctx context.Context, result vcbc.VCBCResult[V]) error {
 		valuePerPeerMutex.Lock()
 		defer valuePerPeerMutex.Unlock()
 
 		valuePerPeer[dVCBC.IdFromTag(result.Tag)] = result.Result
-
-		// VCBC is considered finish when it receives its own value
-		if dVCBC.IdFromTag(result.Tag) == process {
-			core.RecordStep(process-1, core.FINISH_VCBC)
-		}
 
 		// Reference: https://gist.github.com/creachadair/ed1ebebc7df66d19ad7100e8f9296d0a
 		close(valuePerPeerCh)
@@ -80,7 +84,9 @@ func Run[I any, V comparable](
 			for value := range inputValueCh {
 				// Close channel since only one value is expected per consensus instance
 				inputValueCh = nil
-				core.RecordStep(process-1, core.START_VCBC)
+
+				// In theory, should run forever to ensure all nodes can receive all values
+				// In practice, we run until context is done or an error occurs
 				err := vcbc.Run(ctx, dVCBC, tVCBC, instance, process, value)
 				if err != nil {
 					errCh <- err
@@ -95,14 +101,18 @@ func Run[I any, V comparable](
 			// Optimization 3
 			if d.DelayABA {
 				core.RecordStep(process-1, core.START_DELAY_ABA)
+
+				// Compute number of VCBC values we will wait for before starting ABA
+				// With 3f+1 nodes, we can only wait for a maximum of 2f+1 values
 				thresholdValueReached := false
 				n, f := float64(d.Nodes), math.Floor(float64(d.Nodes-1)/3)
 				threshold := int(math.Floor((n+f)/2) + 1)
-
+				
 				valuePerPeerMutex.Lock()
 				ch := valuePerPeerCh
 				valuePerPeerMutex.Unlock()
-
+				
+				// Wait for threshold number of values to be received
 				for !thresholdValueReached {
 					select {
 					case <-ctx.Done():
@@ -120,7 +130,6 @@ func Run[I any, V comparable](
 			}
 			core.RecordStep(process-1, core.START_ABA)
 			for {
-				core.RecordStep(process-1, core.START_ABA_ROUND)
 				leaderId := d.GetLeader(instance, agreementRound)
 
 				valuePerPeerMutex.Lock()
@@ -171,13 +180,13 @@ func Run[I any, V comparable](
 					}
 
 					log.Info(ctx, "Alea decided", z.I64("id", process), z.I64("agreementRound", agreementRound))
-					core.RecordStep(process-1, core.FINISH_ABA_ROUND)
 					core.RecordStep(process-1, core.FINISH_ABA)
+					core.RecordStep(process-1, core.START_DECIDE)
 					d.Decide(ctx, instance, value)
+					core.RecordStep(process-1, core.FINISH_DECIDE)
 					break
 				}
 				agreementRound += 1
-				core.RecordStep(process-1, core.FINISH_ABA_ROUND)
 			}
 		}()
 	}
