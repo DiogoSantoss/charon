@@ -3,6 +3,9 @@ package vcbc
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
+	k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	"math"
 	"strconv"
 	"strings"
@@ -14,6 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/obolnetwork/charon/tbls"
+	"github.com/obolnetwork/charon/testutil"
 )
 
 func TestVCBC(t *testing.T) {
@@ -159,6 +163,11 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 		pubKeys[int64(i)], _ = tbls.SecretToPublicKey(share)
 	}
 
+	k1Keys := make([]*k1.PrivateKey, n)
+	for i := 0; i < n; i++ {
+		k1Keys[i] = testutil.GenerateInsecureK1Key(t, i)
+	}
+
 	if params.FaultySig != nil {
 		for k, v := range params.FaultySig {
 			if v {
@@ -192,7 +201,7 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 		trans := Transport[int64, int64]{
 			Broadcast: func(ctx context.Context, source int64, msgType MsgType, tag string, valueHash []byte,
 				instance int64, value int64,
-				partialSig tbls.Signature, thresholdSig tbls.Signature) error {
+				partialSig tbls.Signature, thresholdSig tbls.Signature, sigs map[int64][]byte) error {
 
 				msg := msg{
 					source:       source,
@@ -203,6 +212,7 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 					value:        value,
 					partialSig:   partialSig,
 					thresholdSig: thresholdSig,
+					sigs:         sigs,
 				}
 
 				for _, channel := range channels {
@@ -217,7 +227,7 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 			},
 			Unicast: func(ctx context.Context, target int64, source int64, msgType MsgType, tag string, valueHash []byte,
 				instance int64, value int64,
-				partialSig tbls.Signature, thresholdSig tbls.Signature) error {
+				partialSig tbls.Signature, thresholdSig tbls.Signature, sigs map[int64][]byte) error {
 				msg := msg{
 					source:       source,
 					msgType:      msgType,
@@ -227,6 +237,7 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 					value:        value,
 					partialSig:   partialSig,
 					thresholdSig: thresholdSig,
+					sigs:         sigs,
 				}
 				channels[target-1] <- msg
 				return nil
@@ -263,8 +274,33 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 				return nil
 			}},
 
+			// This is set to false since its an optimization related to ABA
 			CompleteView:      false,
 			DelayVerification: true,
+			MultiSignature:    true,
+
+			SignDataMultiSig: func(data []byte) ([]byte, error) {
+				if params.FaultySig != nil && params.FaultySig[int64(id)] {
+					fakeSig := testutil.GenerateInsecureK1Key(t, 2)
+					return ecdsa.Sign(fakeSig, data).Serialize(), nil
+				}
+				return ecdsa.Sign(k1Keys[id-1], data).Serialize(), nil
+			},
+			VerifySignatureMultiSig: func(process int64, data []byte, signature []byte) error {
+				pubkey := k1Keys[process-1].PubKey()
+
+				// unserialize signature
+				sig, err := ecdsa.ParseDERSignature(signature)
+				if err != nil {
+					return err
+				}
+				
+				if sig.Verify(data, pubkey) {
+					return nil
+				}
+
+				return errors.New("invalid signature")
+			},
 
 			Nodes: n,
 		}
@@ -364,6 +400,7 @@ type msg struct {
 	realValue    *anypb.Any // Only sent inside Final message
 	partialSig   tbls.Signature
 	thresholdSig tbls.Signature
+	sigs         map[int64][]byte
 }
 
 func (m msg) Source() int64 {
@@ -400,4 +437,8 @@ func (m msg) PartialSig() tbls.Signature {
 
 func (m msg) ThresholdSig() tbls.Signature {
 	return tbls.Signature(m.thresholdSig)
+}
+
+func (m msg) Signatures() map[int64][]byte {
+	return m.sigs
 }

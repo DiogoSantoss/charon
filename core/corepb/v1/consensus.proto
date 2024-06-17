@@ -67,7 +67,8 @@ message VCBCMsg {
   bytes                value            = 4;
   bytes                partialSig       = 5;
   bytes                thresholdSig     = 6;
-  optional google.protobuf.Any  realValue = 7;
+  map<int64, bytes>   sigs             = 7;
+  optional google.protobuf.Any  realValue = 8;
 }
 
 message ABAMsg {

@@ -70,6 +70,9 @@ func Run[I any, V comparable](
 		defer valuePerPeerMutex.Unlock()
 
 		valuePerPeer[dVCBC.IdFromTag(result.Tag)] = result.Result
+		if process == dVCBC.IdFromTag(result.Tag) {
+			core.RecordStep(process-1, core.FINISH_VCBC)
+		}
 
 		// Reference: https://gist.github.com/creachadair/ed1ebebc7df66d19ad7100e8f9296d0a
 		close(valuePerPeerCh)
@@ -84,7 +87,7 @@ func Run[I any, V comparable](
 			for value := range inputValueCh {
 				// Close channel since only one value is expected per consensus instance
 				inputValueCh = nil
-
+				core.RecordStep(process-1, core.START_VCBC)
 				// In theory, should run forever to ensure all nodes can receive all values
 				// In practice, we run until context is done or an error occurs
 				err := vcbc.Run(ctx, dVCBC, tVCBC, instance, process, value)
@@ -122,6 +125,7 @@ func Run[I any, V comparable](
 						ch = valuePerPeerCh
 						if len(valuePerPeer) >= threshold {
 							thresholdValueReached = true
+							log.Info(ctx, "Alea recevied threshold values of VCBCs", z.I64("id", process))
 						}
 						valuePerPeerMutex.Unlock()
 					}

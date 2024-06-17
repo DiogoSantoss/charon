@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/obolnetwork/charon/app/errors"
+	"github.com/obolnetwork/charon/core"
 )
 
 // Transport abstracts the transport layer between processes in the consensus system.
@@ -164,6 +165,10 @@ func InputValue[V comparable](inputValue V) <-chan V {
 // The generic type I is the instance of consensus and can be anything.
 // The generic type V is the arbitrary data value being proposed; it only requires an Equal method.
 func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transport[I, V], instance I, process int64, inputValueCh <-chan V) (err error) {
+	
+	if d.IsLeader(instance, 1, process) {
+		core.RecordStep(process, core.START_QBFT_PREPREPARE_SEND)
+	}
 	defer func() {
 		// Panics are used for assertions and sanity checks to reduce lines of code
 		// and to improve readability. Catch them here.
@@ -266,6 +271,7 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 			if err != nil {
 				return err
 			}
+			core.RecordStep(process, core.FINISH_QBFT_PREPREPARE_SEND)
 		}
 
 		timerChan, stopTimer = d.NewTimer(round)
@@ -312,6 +318,7 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 
 			switch rule {
 			case UponJustifiedPrePrepare: // Algorithm 2:1
+				core.RecordStep(process, core.START_QBFT_HANDLE_PREPREPARE)
 				// Applicable to current or future rounds (since justified)
 				changeRound(msg.Round(), rule)
 
@@ -319,16 +326,20 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 				timerChan, stopTimer = d.NewTimer(round)
 
 				err = broadcastMsg(MsgPrepare, msg.Value(), nil)
+				core.RecordStep(process, core.FINISH_QBFT_HANDLE_PREPREPARE)
 
 			case UponQuorumPrepares: // Algorithm 2:4
+				core.RecordStep(process, core.START_QBFT_HANDLE_PREPARE)
 				// Only applicable to current round
 				preparedRound = round /* == msg.Round*/
 				preparedValue = msg.Value()
 				preparedJustification = justification
 
 				err = broadcastMsg(MsgCommit, preparedValue, nil)
+				core.RecordStep(process, core.FINISH_QBFT_HANDLE_PREPARE)
 
 			case UponQuorumCommits, UponJustifiedDecided: // Algorithm 2:8
+				core.RecordStep(process, core.START_QBFT_HANDLE_COMMIT)
 				// Applicable to any round (since can be justified)
 				changeRound(msg.Round(), rule)
 				qCommit = justification
@@ -337,6 +348,7 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 				timerChan = nil
 
 				d.Decide(ctx, instance, msg.Value(), justification)
+				core.RecordStep(process, core.FINISH_QBFT_HANDLE_COMMIT)
 
 			case UponFPlus1RoundChanges: // Algorithm 3:5
 				// Only applicable to future rounds

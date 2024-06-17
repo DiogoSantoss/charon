@@ -181,6 +181,10 @@ func (m vcbcMsg) ThresholdSig() tbls.Signature {
 	return tbls.Signature(m.msg.ThresholdSig)
 }
 
+func (m vcbcMsg) Signatures() map[int64][]byte {
+	return m.msg.Sigs
+}
+
 // msg wraps *pbv1.QBFTMsg and justifications and implements qbft.Msg[core.Duty, [32]byte].
 type msg struct {
 	msg               *pbv1.QBFTMsg

@@ -32,7 +32,7 @@ type transport struct {
 
 	recvBufferCoin chan commoncoin.CommonCoinMsg[core.Duty] // Common coin inner receive buffer.
 	recvBufferABA  chan aba.ABAMsg[core.Duty]               // ABA inner receive buffer.
-	recvBufferVCBC chan vcbc.VCBCMsg[core.Duty, [32]byte]                         // VCBC2 inner receive buffer.
+	recvBufferVCBC chan vcbc.VCBCMsg[core.Duty, [32]byte]   // VCBC2 inner receive buffer.
 
 	// Mutable state
 	valueMu sync.Mutex
@@ -237,12 +237,12 @@ func (t *transport) BroadcastABA(ctx context.Context, source int64, msgType aba.
 }
 
 func (t *transport) BroadcastVCBC(
-	ctx context.Context, 
+	ctx context.Context,
 	source int64, msgType vcbc.MsgType, tag string, valueHash []byte,
-	duty core.Duty, value [32]byte,  
-	partialSig tbls.Signature, thresholdSig tbls.Signature,
+	duty core.Duty, value [32]byte,
+	partialSig tbls.Signature, thresholdSig tbls.Signature, sigs map[int64][]byte,
 ) error {
-	
+
 	var realValue *anypb.Any
 	if msgType == vcbc.MsgFinal {
 		value, err := t.getValue(value)
@@ -266,6 +266,7 @@ func (t *transport) BroadcastVCBC(
 		PartialSig:   partialSig[:],
 		ThresholdSig: thresholdSig[:],
 		RealValue:    realValue,
+		Sigs:         sigs,
 	}
 
 	vcbcMsg := vcbcMsg{
@@ -287,7 +288,6 @@ func (t *transport) BroadcastVCBC(
 			continue
 		}
 
-
 		err := t.component.sender.SendAsync(ctx, t.component.tcpNode, "/charon/consensus/aleabft/vcbc/0.1.0", p.ID, msg)
 		if err != nil {
 			return err
@@ -301,7 +301,7 @@ func (t *transport) UnicastVCBC(
 	ctx context.Context, target int64,
 	source int64, msgType vcbc.MsgType, tag string, valueHash []byte,
 	duty core.Duty, value [32]byte,
-	partialSig tbls.Signature, thresholdSig tbls.Signature,
+	partialSig tbls.Signature, thresholdSig tbls.Signature, sigs map[int64][]byte,
 ) error {
 
 	var realValue *anypb.Any
@@ -320,7 +320,7 @@ func (t *transport) UnicastVCBC(
 		Tag:       tag,
 		ValueHash: valueHash,
 	}
-	
+
 	msg := &pbv1.VCBCMsg{
 		Source:       source,
 		Content:      content,
@@ -329,6 +329,7 @@ func (t *transport) UnicastVCBC(
 		PartialSig:   partialSig[:],
 		ThresholdSig: thresholdSig[:],
 		RealValue:    realValue,
+		Sigs:         sigs,
 	}
 
 	vcbcMsg := vcbcMsg{
@@ -381,7 +382,7 @@ func (t *transport) ProcessReceivesCoin(ctx context.Context, outerBuffer chan co
 		case <-ctx.Done():
 			return
 		case msg := <-outerBuffer:
-		
+
 			// TODO Why another select
 			select {
 			case <-ctx.Done():

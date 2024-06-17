@@ -13,6 +13,7 @@ import (
 	"time"
 
 	k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
@@ -583,8 +584,30 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 			return tbls.Verify(pubKey, data, signature)
 		},
 
-		CompleteView: true,
+		CompleteView:      true,
 		DelayVerification: true,
+		MultiSignature:    true,
+
+		SignDataMultiSig: func(data []byte) ([]byte, error) {
+			return ecdsa.Sign(c.privkey, data).Serialize(), nil
+		},
+		VerifySignatureMultiSig: func(process int64, data []byte, signature []byte) error {
+			pubkey, err := c.peers[process-1].PublicKey()
+			if err != nil {
+				return err
+			}
+
+			sig, err := ecdsa.ParseDERSignature(signature)
+			if err != nil {
+				return err
+			}
+
+			if sig.Verify(data, pubkey) {
+				return nil
+			}
+
+			return errors.New("failed to verify signature")
+		},
 
 		Nodes: len(c.peers),
 	}
@@ -669,9 +692,10 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 
 	tVCBC := vcbc.Transport[core.Duty, [32]byte]{
 		BroadcastABA: t.BroadcastABA,
-		Broadcast: t.BroadcastVCBC,
-		Unicast:   t.UnicastVCBC,
-		Receive:   t.recvBufferVCBC,
+		Broadcast:    t.BroadcastVCBC,
+		Unicast:      t.UnicastVCBC,
+		Receive:      t.recvBufferVCBC,
+		Refill:       t.recvBufferVCBC,
 	}
 
 	core.RecordStep(peerIdx, core.FINISH_SETUP)
@@ -704,7 +728,7 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 // handle processes an incoming consensus wire message.
 func (c *Component) handle(ctx context.Context, p peer.ID, req proto.Message) (proto.Message, bool, error) {
 	t0 := time.Now()
-	
+
 	pbMsg, ok := req.(*pbv1.ConsensusMsg)
 	if !ok || pbMsg == nil {
 		return nil, false, errors.New("invalid consensus message")
@@ -854,7 +878,7 @@ func (c *Component) handleABA(ctx context.Context, _ peer.ID, req proto.Message)
 
 func (c *Component) handleVCBC(ctx context.Context, _ peer.ID, req proto.Message) (proto.Message, bool, error) {
 	t0 := time.Now()
-	
+
 	pbMsg, ok := req.(*pbv1.VCBCMsg)
 
 	if !ok || pbMsg == nil {
@@ -885,7 +909,7 @@ func (c *Component) handleVCBC(ctx context.Context, _ peer.ID, req proto.Message
 
 	msg := vcbcMsg{
 		msg: pbMsg,
-	} 
+	}
 
 	select {
 	case c.getRecvBufferVCBC(duty) <- msg:
