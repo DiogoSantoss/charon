@@ -451,7 +451,6 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 						}
 
 						log.Debug(ctx, "VCBC received final", z.I64("id", process), z.I64("source", msg.Source()), z.Str("tag", msg.Tag()))
-						core.RecordStep(process-1, core.START_VCBC_SUBS)
 						for _, sub := range d.Subs {
 							err := sub(ctx, VCBCResult[V]{
 								Tag:    msg.Tag(),
@@ -461,7 +460,6 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 								return err
 							}
 						}
-						core.RecordStep(process-1, core.FINISH_VCBC_SUBS)
 					}
 				} else {
 					// [1,1.5]s
@@ -476,7 +474,6 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 						thresholdSigByTag[msg.Tag()] = msg.ThresholdSig()
 
 						log.Debug(ctx, "VCBC received final", z.I64("id", process), z.I64("source", msg.Source()), z.Str("tag", msg.Tag()))
-						core.RecordStep(process-1, core.START_VCBC_SUBS)
 						for _, sub := range d.Subs {
 							err := sub(ctx, VCBCResult[V]{
 								Tag:    msg.Tag(),
@@ -486,7 +483,6 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 								return err
 							}
 						}
-						core.RecordStep(process-1, core.FINISH_VCBC_SUBS)
 					}
 				}
 

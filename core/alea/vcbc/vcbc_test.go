@@ -243,6 +243,7 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 				return nil
 			},
 			Receive: channels[i],
+			Refill:  channels[i],
 		}
 
 		hashFunction := sha256.New()
@@ -294,7 +295,7 @@ func testVCBC(t *testing.T, params testParametersVCBC) {
 				if err != nil {
 					return err
 				}
-				
+
 				if sig.Verify(data, pubkey) {
 					return nil
 				}

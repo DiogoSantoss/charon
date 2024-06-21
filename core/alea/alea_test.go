@@ -343,7 +343,7 @@ func testAlea(t *testing.T, p testParametersAlea) {
 			},
 			Broadcast: func(ctx context.Context, source int64, msgType vcbc.MsgType, tag string, valueHash []byte,
 				instance int64, value int64,
-				partialSig tbls.Signature, thresholdSig tbls.Signature) error {
+				partialSig tbls.Signature, thresholdSig tbls.Signature, sigs map[int64][]byte) error {
 
 				msg := vcbcMsg{
 					source:       source,
@@ -354,6 +354,7 @@ func testAlea(t *testing.T, p testParametersAlea) {
 					value:        value,
 					partialSig:   partialSig,
 					thresholdSig: thresholdSig,
+					sigs:         sigs,
 				}
 
 				for _, channel := range vcbcChannels {
@@ -368,7 +369,7 @@ func testAlea(t *testing.T, p testParametersAlea) {
 			},
 			Unicast: func(ctx context.Context, target int64, source int64, msgType vcbc.MsgType, tag string, valueHash []byte,
 				instance int64, value int64,
-				partialSig tbls.Signature, thresholdSig tbls.Signature) error {
+				partialSig tbls.Signature, thresholdSig tbls.Signature, sigs map[int64][]byte) error {
 				msg := vcbcMsg{
 					source:       source,
 					msgType:      msgType,
@@ -378,6 +379,7 @@ func testAlea(t *testing.T, p testParametersAlea) {
 					value:        value,
 					partialSig:   partialSig,
 					thresholdSig: thresholdSig,
+					sigs:         sigs,
 				}
 				if vcbcChannels != nil {
 					vcbcChannels[target-1] <- msg
@@ -385,6 +387,7 @@ func testAlea(t *testing.T, p testParametersAlea) {
 				return nil
 			},
 			Receive: vcbcChannels[i],
+			Refill: vcbcChannels[i],
 		}
 
 		hashFunction := sha256.New()
@@ -411,7 +414,7 @@ func testAlea(t *testing.T, p testParametersAlea) {
 			VerifyAggregateSignature: func(data []byte, signature tbls.Signature) error {
 				return tbls.Verify(public, data, signature)
 			},
-			CompleteView: false,
+			CompleteView:      false,
 			DelayVerification: true,
 
 			// Missing output as it is defined inside Alea
@@ -577,6 +580,7 @@ type vcbcMsg struct {
 	realValue    *anypb.Any // Only sent inside Final message
 	partialSig   tbls.Signature
 	thresholdSig tbls.Signature
+	sigs         map[int64][]byte
 }
 
 func (m vcbcMsg) Source() int64 {
@@ -613,4 +617,8 @@ func (m vcbcMsg) PartialSig() tbls.Signature {
 
 func (m vcbcMsg) ThresholdSig() tbls.Signature {
 	return tbls.Signature(m.thresholdSig)
+}
+
+func (m vcbcMsg) Signatures() map[int64][]byte {
+	return m.sigs
 }

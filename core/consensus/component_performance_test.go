@@ -194,7 +194,7 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 
 		// Store to file (in case something goes wrong we wont lose all data)
 		/*
-		filename := "multisig_timestamps_" + fmt.Sprint(load) + ".json"
+		filename := "multisig_timestamps.json"
 		path := "/home/diogo/dev/ist/thesis/graphs/data/"
 		file, _ := os.Create(path + filename)
 		defer file.Close()
@@ -219,6 +219,7 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 
 		json.NewEncoder(file).Encode(result)
 		*/
+		
 
 		phasesDuration["load"] = append(phasesDuration["load"], core.ComputeAverageStep(core.START_LOAD, core.FINISH_LOAD, 1))
 
