@@ -51,8 +51,8 @@ func TestComponentPerformanceLatency(t *testing.T) {
 	// Consume metrics buffer
 	go core.ConsumePerformanceBuffer()
 
-	loads := []int{1, 40, 80, 120, 160, 200}
-	//loads := []int{1}
+	//loads := []int{1, 40, 80, 120, 160, 200}
+	loads := []int{1}
 
 	data := make(map[int][]float64)
 	for _, load := range loads {
@@ -60,7 +60,7 @@ func TestComponentPerformanceLatency(t *testing.T) {
 	}
 
 	// Store to file
-	filename := "temp_latency.json"
+	filename := "temp_cluster.json"
 	path := "/home/diogo/dev/ist/thesis/graphs/data/"
 	file, _ := os.Create(path + filename)
 	defer file.Close()
@@ -137,7 +137,7 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 		for i := 0; i < n; i++ {
 			c, err := consensus.New(hosts[i], new(p2p.Sender), peers, p2pkeys[i], testDeadliner{}, func(core.Duty) bool { return true }, func(sci *pbv1.SniffedConsensusInstance) {}, abftShares[i+1], abftPublic, abftPubKeys)
 			require.NoError(t, err)
-			b:=i
+			b := i
 			c.Subscribe(func(_ context.Context, _ core.Duty, set core.UnsignedDataSet) error {
 				core.RecordStep(int64(b), core.FINISH_CONSENSUS)
 				results <- set
@@ -194,32 +194,31 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 
 		// Store to file (in case something goes wrong we wont lose all data)
 		/*
-		filename := "multisig_timestamps.json"
-		path := "/home/diogo/dev/ist/thesis/graphs/data/"
-		file, _ := os.Create(path + filename)
-		defer file.Close()
+			filename := "multisig_timestamps.json"
+			path := "/home/diogo/dev/ist/thesis/graphs/data/"
+			file, _ := os.Create(path + filename)
+			defer file.Close()
 
-		type pair struct {
-			S string
-			T int64
-		}
-
-		result := make([]pair, 0)
-
-		for step, timestamps := range core.GetMetricsByPeer(0) {
-			for _, timestamp := range timestamps {
-				result = append(result, pair{step.String(), timestamp.UnixNano()})
+			type pair struct {
+				S string
+				T int64
 			}
-		}
-		sort.Slice(result, func(i, j int) bool {
-			return result[i].T < result[j].T
-		})
 
-		fmt.Println(result)
+			result := make([]pair, 0)
 
-		json.NewEncoder(file).Encode(result)
+			for step, timestamps := range core.GetMetricsByPeer(0) {
+				for _, timestamp := range timestamps {
+					result = append(result, pair{step.String(), timestamp.UnixNano()})
+				}
+			}
+			sort.Slice(result, func(i, j int) bool {
+				return result[i].T < result[j].T
+			})
+
+			fmt.Println(result)
+
+			json.NewEncoder(file).Encode(result)
 		*/
-		
 
 		phasesDuration["load"] = append(phasesDuration["load"], core.ComputeAverageStep(core.START_LOAD, core.FINISH_LOAD, 1))
 
@@ -237,7 +236,7 @@ func testComponentPerformanceLatency(t *testing.T, load int) []float64 {
 	}
 
 	// Store to file (in case something goes wrong we wont lose all data)
-	filename := "temp_latency" + fmt.Sprint(load) + ".json"
+	filename := "temp_cluster_qbft_" + fmt.Sprint(n) + ".json"
 	path := "/home/diogo/dev/ist/thesis/graphs/data/"
 	file, _ := os.Create(path + filename)
 	defer file.Close()
@@ -521,4 +520,184 @@ func TestComponentPerformanceCrash(t *testing.T) {
 		}
 	}
 	cancel()
+}
+
+func TestComponentPerformanceCluster(t *testing.T) {
+
+	// Consume metrics buffer
+	go core.ConsumePerformanceBuffer()
+
+	//faulty_nodes := []int{1}
+	faulty_nodes := []int{4, 5, 6}
+
+	data := make(map[int][]float64)
+	for _, f := range faulty_nodes {
+		data[f] = testComponentPerformanceCluster(t, f)
+	}
+
+	// Store to file
+	filename := "temp_cluster.json"
+	path := "/home/diogo/dev/ist/thesis/graphs/data/"
+	file, _ := os.Create(path + filename)
+	defer file.Close()
+	json.NewEncoder(file).Encode(data)
+
+	// Open file
+	//filename := "temp_cluster.json"
+	//path := "/home/diogo/dev/ist/thesis/graphs/data/"
+	//file,_ :=  os.Open(path + filename)
+	//var data2 map[int][]float64
+	//json.NewDecoder(file).Decode(&data2)
+	//fmt.Println(data2)
+	//for k, v := range data {
+	//	data2[k] = v
+	//}
+	//file.Close()
+	//file, _ = os.Create(path + filename)
+	//json.NewEncoder(file).Encode(data2)
+	//fmt.Println(data2)
+
+}
+
+func testComponentPerformanceCluster(t *testing.T, f int) []float64 {
+	t.Helper()
+
+	const (
+		seed = 0
+	)
+
+	var (
+		n = 3*f + 1
+	)
+
+	random := rand.New(rand.NewSource(0))
+	lock, p2pkeys, _ := cluster.NewForT(t, 1, f+1, n, seed, random)
+	abftPublic, _, abftPubKeys, abftShares := createBLSKeys(t, uint(n), uint(f))
+
+	var (
+		peers       []p2p.Peer
+		hosts       []host.Host
+		hostsInfo   []peer.AddrInfo
+		components  []*consensus.Component
+		results     = make(chan core.UnsignedDataSet, n)
+		runErrs     = make(chan error, n)
+		ctx, cancel = context.WithCancel(context.Background())
+	)
+	defer cancel()
+
+	for i := 0; i < n; i++ {
+		addr := testutil.AvailableAddr(t)
+		mAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", addr.IP, addr.Port))
+		require.NoError(t, err)
+
+		priv := (*libp2pcrypto.Secp256k1PrivateKey)(p2pkeys[i])
+		h, err := libp2p.New(libp2p.Identity(priv), libp2p.ListenAddrs(mAddr))
+		testutil.SkipIfBindErr(t, err)
+		require.NoError(t, err)
+
+		record, err := enr.Parse(lock.Operators[i].ENR)
+		require.NoError(t, err)
+
+		p, err := p2p.NewPeerFromENR(record, i)
+		require.NoError(t, err)
+
+		hostsInfo = append(hostsInfo, peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()})
+		peers = append(peers, p)
+		hosts = append(hosts, h)
+	}
+
+	// Connect each host with its peers
+	for i := 0; i < n; i++ {
+		for j := 0; j < n; j++ {
+			if i == j {
+				continue
+			}
+			err := hosts[i].Connect(ctx, hostsInfo[j])
+			require.NoError(t, err)
+		}
+	}
+
+	pubkey := testutil.RandomCorePubKey(t)
+
+	// Metrics
+	phasesDuration := make(map[string][]float64)
+
+	// Run test N times to average results
+	for it := 0; it < 1; it++ {
+
+		ctx, cancel = context.WithCancel(context.Background())
+		components = nil
+
+		for i := 0; i < n; i++ {
+			c, err := consensus.New(hosts[i], new(p2p.Sender), peers, p2pkeys[i], testDeadliner{}, func(core.Duty) bool { return true }, func(sci *pbv1.SniffedConsensusInstance) {}, abftShares[i+1], abftPublic, abftPubKeys)
+			require.NoError(t, err)
+			b := i
+			c.Subscribe(func(_ context.Context, _ core.Duty, set core.UnsignedDataSet) error {
+				core.RecordStep(int64(b), core.FINISH_CONSENSUS)
+				results <- set
+				return nil
+			})
+			c.Start(log.WithCtx(ctx, z.Int("node", i)))
+
+			components = append(components, c)
+		}
+
+		core.RecordStep(0, core.START_LOAD)
+
+		// Propose values (blocking)
+		for i, c := range components {
+			go func(ctx context.Context, i int, c *consensus.Component) {
+				core.RecordStep(int64(i), core.START_CONSENSUS)
+				runErrs <- c.Propose(
+					log.WithCtx(ctx, z.Int("node", i), z.Str("peer", p2p.PeerName(hosts[i].ID()))),
+					core.Duty{Type: core.DutyAttester, Slot: uint64(0)},
+					core.UnsignedDataSet{pubkey: testutil.RandomCoreAttestationData(t)},
+				)
+			}(ctx, i, c)
+		}
+
+		var (
+			count  int
+			result core.UnsignedDataSet
+		)
+		for {
+			select {
+			case err := <-runErrs:
+				testutil.RequireNoError(t, err)
+			case res := <-results:
+				if count == 0 {
+					result = res
+				} else {
+					require.EqualValues(t, result, res)
+				}
+				count++
+			}
+
+			if count == n {
+				break
+			}
+		}
+		core.RecordStep(0, core.FINISH_LOAD)
+		cancel()
+
+		// Sleep to give time for all RecordSteps to execute since some only happen after cancel()
+		time.Sleep(100 * time.Millisecond)
+
+		phasesDuration["load"] = append(phasesDuration["load"], core.ComputeAverageStep(core.START_LOAD, core.FINISH_LOAD, 1))
+		phasesDuration["consensus"] = append(phasesDuration["consensus"], core.ComputeAverageStep(core.START_CONSENSUS, core.FINISH_CONSENSUS, n))
+
+		// Record metrics per iteration
+		core.ClearMetrics()
+	}
+
+	cancel()
+
+	phases := []string{"load", "consensus"}
+
+	for _, phase := range phases {
+		avg, std := core.ComputeAverageAndStandardDeviation(phasesDuration[phase])
+		fmt.Printf("%s Duration\nAvg: %f\nStd: %f\n", phase, avg, std)
+	}
+
+	return phasesDuration["consensus"]
 }
