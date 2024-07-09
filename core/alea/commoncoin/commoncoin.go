@@ -90,7 +90,7 @@ func SampleCoin[I any](ctx context.Context, d Definition[I], t Transport[I], ins
 			// verify signature validity
 			err := d.VerifySignature(msg.Source(), coinName, msg.Sig())
 			if err != nil {
-				log.Debug(ctx, "Node id received invalid signature from source", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound), z.I64("source", msg.Source()))
+				log.Debug(ctx, "Node id received invalid signature from source", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("abaRound", abaRound), z.I64("source", msg.Source()), z.Any("error",err))
 				continue
 			}
 

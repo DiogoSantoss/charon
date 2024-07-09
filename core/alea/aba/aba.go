@@ -298,8 +298,6 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 		select {
 		case msg := <-t.Receive:
 
-			// TODO create another buffer to store this messages and when ABA finishes, refill for next agreement round
-			// this should improve performance
 			// Message from past agreement round, don't need to handle it since locally already moved to the next round
 			if msg.AgreementRound() < agreementRound {
 				continue
@@ -311,6 +309,15 @@ func Run[I any](ctx context.Context, d Definition, t Transport[I], dCoin commonc
 
 			if !storeMessage(msg) {
 				break
+			}
+
+			// TODO: There is a problem with using the CompleteView optimization with DelayABA
+			// VCBC may broadcast a ABAfinish **after** he already broadcasted ABAfinish (for another value)
+			// if the node has not yet broadcasted then we can use this little hack, otherwise consensus may not finish
+			// or may decide diferent values
+			// Fixing this would imply that VCBC knows about state regarding ABA which is currently not possible
+			if msg.MsgType() == MsgFinish && msg.Source() == process && !alreadyBroadcastedFinish {
+				alreadyBroadcastedFinish = true
 			}
 
 			// Handle INPUT messages as INIT messages

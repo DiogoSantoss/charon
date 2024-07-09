@@ -109,7 +109,10 @@ func Run[I any, V comparable](
 				// With 3f+1 nodes, we can only wait for a maximum of 2f+1 values
 				thresholdValueReached := false
 				n, f := float64(d.Nodes), math.Floor(float64(d.Nodes-1)/3)
+				// This is maximum we can wait for (equivalent to 2f+1 if n=3f+1)
 				threshold := int(math.Floor((n+f)/2) + 1)
+				// This is another option, wait for less may be faster
+				//threshold = int(f + 1)
 				
 				valuePerPeerMutex.Lock()
 				ch := valuePerPeerCh
@@ -160,6 +163,7 @@ func Run[I any, V comparable](
 					ch := valuePerPeerCh
 					valuePerPeerMutex.Unlock()
 
+					core.RecordStep(process-1, core.START_VCBC_REQUEST)
 					if !exists {
 						log.Info(ctx, "Alea empty leader value", z.I64("id", process), z.I64("agreementRound", agreementRound), z.I64("leaderId", leaderId))
 						err = vcbc.BroadcastRequest(ctx, dVCBC, tVCBC, instance, process, dVCBC.BuildTag(instance, leaderId))
@@ -182,6 +186,7 @@ func Run[I any, V comparable](
 							}
 						}
 					}
+					core.RecordStep(process-1, core.FINISH_VCBC_REQUEST)
 
 					log.Info(ctx, "Alea decided", z.I64("id", process), z.I64("agreementRound", agreementRound))
 					core.RecordStep(process-1, core.FINISH_ABA)

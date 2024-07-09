@@ -656,6 +656,7 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 			}
 		},
 
+		// If this is disabled, so should be the CompleteView
 		DelayABA: true,
 
 		Nodes: len(c.peers),

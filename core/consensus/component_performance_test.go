@@ -9,23 +9,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	"github.com/libp2p/go-libp2p"
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
-	"github.com/stretchr/testify/require"
-
 	"github.com/obolnetwork/charon/app/log"
 	"github.com/obolnetwork/charon/app/z"
 	"github.com/obolnetwork/charon/cluster"
 	"github.com/obolnetwork/charon/core"
+	"github.com/obolnetwork/charon/core/alea/vcbc"
 	"github.com/obolnetwork/charon/core/consensus"
 	pbv1 "github.com/obolnetwork/charon/core/corepb/v1"
 	"github.com/obolnetwork/charon/eth2util/enr"
 	"github.com/obolnetwork/charon/p2p"
 	"github.com/obolnetwork/charon/tbls"
 	"github.com/obolnetwork/charon/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 // Create BLS keys necessary for AleaBFT protocol
@@ -686,18 +687,123 @@ func testComponentPerformanceCluster(t *testing.T, f int) []float64 {
 		phasesDuration["load"] = append(phasesDuration["load"], core.ComputeAverageStep(core.START_LOAD, core.FINISH_LOAD, 1))
 		phasesDuration["consensus"] = append(phasesDuration["consensus"], core.ComputeAverageStep(core.START_CONSENSUS, core.FINISH_CONSENSUS, n))
 
+		phasesDuration["vcbc"] = append(phasesDuration["vcbc"], core.ComputeAverageStep(core.START_VCBC, core.FINISH_VCBC, n))
+		phasesDuration["delay"] = append(phasesDuration["delay"], core.ComputeAverageStep(core.START_DELAY_ABA, core.FINISH_DELAY_ABA, n))
+		phasesDuration["aba"] = append(phasesDuration["aba"], core.ComputeAverageStep(core.START_ABA, core.FINISH_ABA, n))
+		phasesDuration["request"] = append(phasesDuration["request"], core.ComputeAverageStep(core.START_VCBC_REQUEST, core.FINISH_VCBC_REQUEST, n))
+
 		// Record metrics per iteration
 		core.ClearMetrics()
 	}
 
 	cancel()
 
-	phases := []string{"load", "consensus"}
+	phases := []string{"load", "consensus", "vcbc", "delay", "aba", "request"}
 
 	for _, phase := range phases {
 		avg, std := core.ComputeAverageAndStandardDeviation(phasesDuration[phase])
-		fmt.Printf("%s Duration\nAvg: %f\nStd: %f\n", phase, avg, std)
+		fmt.Printf("%s Duration\nAvg: %f\nStd: %f\n\n", phase, avg, std)
 	}
 
 	return phasesDuration["consensus"]
+}
+
+func TestSignatureSchemePerformance(t *testing.T) {
+
+	/*
+		During VCBC there are multiple operations that require cryptography
+		(BLS)
+			Upon receiving value must generate partial signature
+			Upon receiving quorum of partial signatures must aggregate and verify full signature
+		(ECDSA)
+			Upon receiving value must generate signature
+			Upon receiving quorum of signatures must verify all signatures
+	*/
+
+	// Realistic content to be signed
+	payload := make([]byte, 32)
+	rand.Read(payload)
+	content, _ := json.Marshal(vcbc.VCBCMessageContent{
+		MsgType:   vcbc.MsgSend,
+		Tag:       "ID.1.100",
+		ValueHash: payload,
+	})
+
+	faultyNodesSize := []uint{1, 2, 3, 4}
+	for _, size := range faultyNodesSize {
+		testSignatureSchemePerformance(t, content, size)
+		fmt.Println()
+	}
+}
+
+func testSignatureSchemePerformance(t *testing.T, content []byte, f uint) {
+
+	const r = 5
+	n := 3*f + 1
+
+	// Test for BLS signature scheme
+	pubKey, _, _, privKeys := createBLSKeys(t, n, f)
+
+	// Generate partial signature
+	t1_partialSignature := time.Now()
+	for k := 0; k < r; k++ {
+		tbls.Sign(privKeys[1], content)
+	}
+	t_partialSignature := time.Since(t1_partialSignature) / r
+
+	fmt.Println("Partial Signature:", t_partialSignature)
+
+	// Aggregate f+1 signatures
+	partialSigs := make(map[int]tbls.Signature, n)
+	for i := 0; i < int(f+1); i++ {
+		sig, _ := tbls.Sign(privKeys[i+1], content)
+		partialSigs[i+1] = sig
+	}
+
+	t1_aggregate := time.Now()
+	for k := 0; k < r; k++ {
+		tbls.ThresholdAggregate(partialSigs)
+	}
+	t_aggregate := time.Since(t1_aggregate) / r
+
+	fmt.Println("Aggregate:", t_aggregate)
+
+	agg, _ := tbls.ThresholdAggregate(partialSigs)
+	t1_verify := time.Now()
+	for k := 0; k < r; k++ {
+		tbls.Verify(pubKey, content, agg)
+	}
+	t_verify := time.Since(t1_verify) / r
+
+	fmt.Println("Verify:", t_verify)
+
+	// Test for ECDSA signature scheme
+	_, p2pkeys, _ := cluster.NewForT(t, 1, int(f+1), int(n), 0, rand.New(rand.NewSource(0)))
+
+	// Generate signature
+	t1_signature := time.Now()
+	for k := 0; k < r; k++ {
+		ecdsa.Sign(p2pkeys[1], content)
+	}
+	t_signature := time.Since(t1_signature) / r
+
+	fmt.Println("Signature:", t_signature)
+
+	// Verify f+1 signatures
+	sigs := make([][]byte, f+1)
+	for i := 0; i < int(f+1); i++ {
+		sig := ecdsa.Sign(p2pkeys[i], content).Serialize()
+		sigs[i] = sig
+	}
+
+	t1_verify_ecdsa := time.Now()
+	for k := 0; k < r; k++ {
+		for i := 0; i < int(f+1); i++ {
+			sig, _ := ecdsa.ParseDERSignature(sigs[i])
+			sig.Verify(content, p2pkeys[i].PubKey())
+		}
+	}
+	t_verify_ecdsa := time.Since(t1_verify_ecdsa) / r
+
+	fmt.Println("Verify:", t_verify_ecdsa)
 }

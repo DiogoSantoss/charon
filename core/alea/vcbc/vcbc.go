@@ -253,10 +253,11 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 					if d.CompleteView && len(valueByTag) == d.Nodes {
 						log.Debug(ctx, "VCBC sent ABA finish", z.I64("id", process))
 						// Send ABA Finish
-						// TODO: AgreementRound and Round being zero
+						// TODO: AgreementRound being zero
 						// may be a problem since if VCBC takes too long
-						// ABA may already have gone past round 0
+						// ABA may already have gone past agre round 0
 						// thus making this useless
+						// TODO: Another problem, a node may send multiple finishes
 						err := t.BroadcastABA(ctx, process, aba.MsgFinish, instance, 0, 0, 1, nil)
 						if err != nil {
 							return err
@@ -491,7 +492,7 @@ func Run[I any, V comparable](ctx context.Context, d Definition[I, V], t Transpo
 				if d.MultiSignature {
 
 					if signaturesByTag[msg.Tag()] != nil && len(signaturesByTag[msg.Tag()]) >= d.ThresholdPartialSigValue() {
-						err := t.Broadcast(ctx, process, MsgFinal, msg.Tag(), d.HashValue(valueByTag[msg.Tag()]), instance, valueByTag[msg.Tag()], tbls.Signature{}, tbls.Signature{}, signaturesByTag[msg.Tag()])
+						err := t.Unicast(ctx, msg.Source(), process, MsgAnswer, msg.Tag(), nil, instance, valueByTag[msg.Tag()], tbls.Signature{}, tbls.Signature{}, signaturesByTag[msg.Tag()])
 						if err != nil {
 							return err
 						}

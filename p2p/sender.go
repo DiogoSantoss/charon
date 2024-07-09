@@ -333,7 +333,7 @@ func Send(ctx context.Context, tcpNode host.Host, protoID protocol.ID, peerID pe
 ) error {
 	// Sleep for some time to simulate network latency
 	// 10,20,30,40,50,60,70,80,90,100 ms
-	time.Sleep(time.Millisecond * time.Duration(10))
+	//time.Sleep(time.Millisecond * time.Duration(10))
 	o := defaultSendRecvOpts(protoID)
 	for _, opt := range opts {
 		opt(&o)
