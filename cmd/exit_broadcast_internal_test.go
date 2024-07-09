@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	eth2v1 "github.com/attestantio/go-eth2-client/api/v1"
 	eth2p0 "github.com/attestantio/go-eth2-client/spec/phase0"
@@ -75,11 +76,6 @@ func testRunBcastFullExitCmdFlow(t *testing.T, fromFile bool) {
 	mBytes, err := json.Marshal(lock)
 	require.NoError(t, err)
 
-	handler, addLockFiles := obolapimock.MockServer(false)
-	srv := httptest.NewServer(handler)
-	addLockFiles(lock)
-	defer srv.Close()
-
 	validatorSet := beaconmock.ValidatorSet{}
 
 	for idx, v := range lock.Validators {
@@ -103,19 +99,29 @@ func testRunBcastFullExitCmdFlow(t *testing.T, fromFile bool) {
 		require.NoError(t, beaconMock.Close())
 	}()
 
+	eth2Cl, err := eth2Client(ctx, []string{beaconMock.Address()}, 10*time.Second, [4]byte(lock.ForkVersion))
+	require.NoError(t, err)
+
+	handler, addLockFiles := obolapimock.MockServer(false, eth2Cl)
+	srv := httptest.NewServer(handler)
+	addLockFiles(lock)
+	defer srv.Close()
+
 	writeAllLockData(t, root, operatorAmt, enrs, operatorShares, mBytes)
 
 	for idx := 0; idx < operatorAmt; idx++ {
 		baseDir := filepath.Join(root, fmt.Sprintf("op%d", idx))
 
 		config := exitConfig{
-			BeaconNodeURL:    beaconMock.Address(),
-			ValidatorPubkey:  lock.Validators[0].PublicKeyHex(),
-			PrivateKeyPath:   filepath.Join(baseDir, "charon-enr-private-key"),
-			ValidatorKeysDir: filepath.Join(baseDir, "validator_keys"),
-			LockFilePath:     filepath.Join(baseDir, "cluster-lock.json"),
-			PublishAddress:   srv.URL,
-			ExitEpoch:        194048,
+			BeaconNodeEndpoints: []string{beaconMock.Address()},
+			ValidatorPubkey:     lock.Validators[0].PublicKeyHex(),
+			PrivateKeyPath:      filepath.Join(baseDir, "charon-enr-private-key"),
+			ValidatorKeysDir:    filepath.Join(baseDir, "validator_keys"),
+			LockFilePath:        filepath.Join(baseDir, "cluster-lock.json"),
+			PublishAddress:      srv.URL,
+			ExitEpoch:           194048,
+			BeaconNodeTimeout:   30 * time.Second,
+			PublishTimeout:      10 * time.Second,
 		}
 
 		require.NoError(t, runSignPartialExit(ctx, config), "operator index: %v", idx)
@@ -124,17 +130,19 @@ func testRunBcastFullExitCmdFlow(t *testing.T, fromFile bool) {
 	baseDir := filepath.Join(root, fmt.Sprintf("op%d", 0))
 
 	config := exitConfig{
-		BeaconNodeURL:    beaconMock.Address(),
-		ValidatorPubkey:  lock.Validators[0].PublicKeyHex(),
-		PrivateKeyPath:   filepath.Join(baseDir, "charon-enr-private-key"),
-		ValidatorKeysDir: filepath.Join(baseDir, "validator_keys"),
-		LockFilePath:     filepath.Join(baseDir, "cluster-lock.json"),
-		PublishAddress:   srv.URL,
-		ExitEpoch:        194048,
+		BeaconNodeEndpoints: []string{beaconMock.Address()},
+		ValidatorPubkey:     lock.Validators[0].PublicKeyHex(),
+		PrivateKeyPath:      filepath.Join(baseDir, "charon-enr-private-key"),
+		ValidatorKeysDir:    filepath.Join(baseDir, "validator_keys"),
+		LockFilePath:        filepath.Join(baseDir, "cluster-lock.json"),
+		PublishAddress:      srv.URL,
+		ExitEpoch:           194048,
+		BeaconNodeTimeout:   30 * time.Second,
+		PublishTimeout:      10 * time.Second,
 	}
 
 	if fromFile {
-		exit, err := exitFromObolAPI(ctx, lock.Validators[0].PublicKeyHex(), srv.URL, cl, enrs[0])
+		exit, err := exitFromObolAPI(ctx, lock.Validators[0].PublicKeyHex(), srv.URL, 10*time.Second, cl, enrs[0])
 		require.NoError(t, err)
 
 		exitBytes, err := json.Marshal(exit)
@@ -152,14 +160,14 @@ func testRunBcastFullExitCmdFlow(t *testing.T, fromFile bool) {
 func Test_runBcastFullExitCmd_Config(t *testing.T) {
 	t.Parallel()
 	type test struct {
-		name                string
-		noIdentity          bool
-		noLock              bool
-		badOAPIURL          bool
-		badBeaconNodeURL    bool
-		badValidatorAddr    bool
-		badExistingExitPath bool
-		errData             string
+		name                   string
+		noIdentity             bool
+		noLock                 bool
+		badOAPIURL             bool
+		badBeaconNodeEndpoints bool
+		badValidatorAddr       bool
+		badExistingExitPath    bool
+		errData                string
 	}
 
 	tests := []test{
@@ -179,9 +187,9 @@ func Test_runBcastFullExitCmd_Config(t *testing.T) {
 			errData:    "could not create obol api client",
 		},
 		{
-			name:             "Bad beacon node URL",
-			badBeaconNodeURL: true,
-			errData:          "cannot create eth2 client for specified beacon node",
+			name:                   "Bad beacon node URLs",
+			badBeaconNodeEndpoints: true,
+			errData:                "cannot create eth2 client for specified beacon node",
 		},
 		{
 			name:             "Bad validator address",
@@ -251,7 +259,7 @@ func Test_runBcastFullExitCmd_Config(t *testing.T) {
 
 			bnURL := badStr
 
-			if !test.badBeaconNodeURL {
+			if !test.badBeaconNodeEndpoints {
 				beaconMock, err := beaconmock.New()
 				require.NoError(t, err)
 				defer func() {
@@ -273,13 +281,15 @@ func Test_runBcastFullExitCmd_Config(t *testing.T) {
 			baseDir := filepath.Join(root, "op0") // one operator is enough
 
 			config := exitConfig{
-				BeaconNodeURL:    bnURL,
-				ValidatorPubkey:  valAddr,
-				PrivateKeyPath:   filepath.Join(baseDir, "charon-enr-private-key"),
-				ValidatorKeysDir: filepath.Join(baseDir, "validator_keys"),
-				LockFilePath:     filepath.Join(baseDir, "cluster-lock.json"),
-				PublishAddress:   oapiURL,
-				ExitEpoch:        0,
+				BeaconNodeEndpoints: []string{bnURL},
+				ValidatorPubkey:     valAddr,
+				PrivateKeyPath:      filepath.Join(baseDir, "charon-enr-private-key"),
+				ValidatorKeysDir:    filepath.Join(baseDir, "validator_keys"),
+				LockFilePath:        filepath.Join(baseDir, "cluster-lock.json"),
+				PublishAddress:      oapiURL,
+				ExitEpoch:           0,
+				BeaconNodeTimeout:   30 * time.Second,
+				PublishTimeout:      10 * time.Second,
 			}
 
 			if test.badExistingExitPath {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"time"
 
 	eth2p0 "github.com/attestantio/go-eth2-client/spec/phase0"
 	k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -31,7 +32,7 @@ func newBcastFullExitCmd(runFunc func(context.Context, exitConfig) error) *cobra
 	cmd := &cobra.Command{
 		Use:   "broadcast",
 		Short: "Submit partial exit message for a distributed validator",
-		Long:  `Retrieves and broadcasts a fully signed validator exit message, aggregated with the available partial signatures retrieved from the publish-address.`,
+		Long:  `Retrieves and broadcasts to the configured beacon node a fully signed validator exit message, aggregated with the available partial signatures retrieved from the publish-address. Can also read a signed exit message from disk, in order to be broadcasted to the configured beacon node.`,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := log.InitLogger(config.Log); err != nil {
@@ -52,8 +53,10 @@ func newBcastFullExitCmd(runFunc func(context.Context, exitConfig) error) *cobra
 		{validatorKeysDir, false},
 		{exitEpoch, false},
 		{validatorPubkey, true},
-		{beaconNodeURL, true},
+		{beaconNodeEndpoints, true},
 		{exitFromFile, false},
+		{beaconNodeTimeout, false},
+		{publishTimeout, false},
 	})
 
 	bindLogFlags(cmd.Flags(), &config.Log)
@@ -79,7 +82,7 @@ func runBcastFullExit(ctx context.Context, config exitConfig) error {
 
 	ctx = log.WithCtx(ctx, z.Str("validator", validator.String()))
 
-	eth2Cl, err := eth2Client(ctx, config.BeaconNodeURL)
+	eth2Cl, err := eth2Client(ctx, config.BeaconNodeEndpoints, config.BeaconNodeTimeout, [4]byte(cl.GetForkVersion()))
 	if err != nil {
 		return errors.Wrap(err, "cannot create eth2 client for specified beacon node")
 	}
@@ -92,7 +95,7 @@ func runBcastFullExit(ctx context.Context, config exitConfig) error {
 		fullExit, err = exitFromPath(maybeExitFilePath)
 	} else {
 		log.Info(ctx, "Retrieving full exit message from publish address")
-		fullExit, err = exitFromObolAPI(ctx, config.ValidatorPubkey, config.PublishAddress, cl, identityKey)
+		fullExit, err = exitFromObolAPI(ctx, config.ValidatorPubkey, config.PublishAddress, config.PublishTimeout, cl, identityKey)
 	}
 
 	if err != nil {
@@ -138,8 +141,8 @@ func runBcastFullExit(ctx context.Context, config exitConfig) error {
 }
 
 // exitFromObolAPI fetches an eth2p0.SignedVoluntaryExit message from publishAddr for the given validatorPubkey.
-func exitFromObolAPI(ctx context.Context, validatorPubkey, publishAddr string, cl *manifestpb.Cluster, identityKey *k1.PrivateKey) (eth2p0.SignedVoluntaryExit, error) {
-	oAPI, err := obolapi.New(publishAddr)
+func exitFromObolAPI(ctx context.Context, validatorPubkey, publishAddr string, publishTimeout time.Duration, cl *manifestpb.Cluster, identityKey *k1.PrivateKey) (eth2p0.SignedVoluntaryExit, error) {
+	oAPI, err := obolapi.New(publishAddr, obolapi.WithTimeout(publishTimeout))
 	if err != nil {
 		return eth2p0.SignedVoluntaryExit{}, errors.Wrap(err, "could not create obol api client")
 	}

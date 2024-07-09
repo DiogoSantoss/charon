@@ -426,14 +426,43 @@ func wireCoreWorkflow(ctx context.Context, life *lifecycle.Manager, conf Config,
 	// Setup validator cache, refreshing it every epoch.
 	valCache := eth2wrap.NewValidatorCache(eth2Cl, eth2Pubkeys)
 	eth2Cl.SetValidatorCache(valCache.Get)
+
+	firstValCacheRefresh := true
+	var fvcrLock sync.RWMutex
+
+	shouldUpdateCache := func(slot core.Slot, lock *sync.RWMutex) bool {
+		lock.RLock()
+		defer lock.RUnlock()
+
+		if !slot.FirstInEpoch() && !firstValCacheRefresh {
+			return false
+		}
+
+		return true
+	}
+
 	sched.SubscribeSlots(func(ctx context.Context, slot core.Slot) error {
-		if !slot.FirstInEpoch() {
+		if !shouldUpdateCache(slot, &fvcrLock) {
 			return nil
 		}
-		valCache.Trim()
-		_, err := valCache.Get(ctx)
 
-		return err
+		fvcrLock.Lock()
+		defer fvcrLock.Unlock()
+
+		ctx = log.WithCtx(ctx, z.Bool("first_refresh", firstValCacheRefresh))
+
+		log.Debug(ctx, "Refreshing validator cache")
+
+		valCache.Trim()
+		_, _, err := valCache.Get(ctx)
+		if err != nil {
+			log.Error(ctx, "Cannot refresh validator cache", err)
+			return err
+		}
+
+		firstValCacheRefresh = false
+
+		return nil
 	})
 
 	gaterFunc, err := core.NewDutyGater(ctx, eth2Cl)
@@ -441,7 +470,7 @@ func wireCoreWorkflow(ctx context.Context, life *lifecycle.Manager, conf Config,
 		return err
 	}
 
-	fetch, err := fetcher.New(eth2Cl, feeRecipientFunc)
+	fetch, err := fetcher.New(eth2Cl, feeRecipientFunc, mutableConf.BuilderAPI)
 	if err != nil {
 		return err
 	}
@@ -651,12 +680,12 @@ func wireRecaster(ctx context.Context, eth2Cl eth2wrap.Client, sched core.Schedu
 			return errors.Wrap(err, "new versioned signed validator registration")
 		}
 
-		slot, err := slotFromTimestamp(ctx, eth2Cl, reg.V1.Message.Timestamp)
+		slot, err := validatorapi.SlotFromTimestamp(ctx, eth2Cl, reg.V1.Message.Timestamp)
 		if err != nil {
 			return errors.Wrap(err, "calculate slot from timestamp")
 		}
 
-		if err = recaster.Store(ctx, core.NewBuilderRegistrationDuty(slot), core.SignedDataSet{pubkey: signedData}); err != nil {
+		if err = recaster.Store(ctx, core.NewBuilderRegistrationDuty(uint64(slot)), core.SignedDataSet{pubkey: signedData}); err != nil {
 			return errors.Wrap(err, "recaster store registration")
 		}
 	}
@@ -825,12 +854,10 @@ func newETH2Client(ctx context.Context, conf Config, life *lifecycle.Manager,
 		return nil, errors.New("beacon node endpoints empty")
 	}
 
-	eth2Cl, err := eth2wrap.NewMultiHTTP(eth2ClientTimeout, conf.BeaconNodeAddrs...)
+	eth2Cl, err := eth2wrap.NewMultiHTTP(eth2ClientTimeout, [4]byte(forkVersion), conf.BeaconNodeAddrs...)
 	if err != nil {
 		return nil, errors.Wrap(err, "new eth2 http client")
 	}
-
-	eth2Cl.SetForkVersion([4]byte(forkVersion))
 
 	if conf.SyntheticBlockProposals {
 		log.Info(ctx, "Synthetic block proposals enabled")
@@ -1065,28 +1092,4 @@ func hex7(input []byte) string {
 	}
 
 	return resp[:7]
-}
-
-// slotFromTimestamp returns slot from the provided timestamp.
-func slotFromTimestamp(ctx context.Context, eth2Cl eth2wrap.Client, timestamp time.Time) (uint64, error) {
-	genesis, err := eth2Cl.GenesisTime(ctx)
-	if err != nil {
-		return 0, err
-	} else if timestamp.Before(genesis) {
-		return 0, errors.New("registration timestamp before genesis")
-	}
-
-	eth2Resp, err := eth2Cl.Spec(ctx, &eth2api.SpecOpts{})
-	if err != nil {
-		return 0, err
-	}
-
-	slotDuration, ok := eth2Resp.Data["SECONDS_PER_SLOT"].(time.Duration)
-	if !ok {
-		return 0, errors.New("fetch slot duration")
-	}
-
-	delta := timestamp.Sub(genesis)
-
-	return uint64(delta / slotDuration), nil
 }

@@ -15,23 +15,19 @@ import (
 	"github.com/obolnetwork/charon/app/errors"
 )
 
-var capellaForkMap = map[string]string{
-	"0x00000000": "0x03000000",
-	"0x00001020": "0x03001020",
-	"0x00000064": "0x03000064",
-	"0x90000069": "0x90000072",
-	"0x01017000": "0x04017000",
-}
-
 // CapellaFork maps generic fork hashes to their specific Capella hardfork
 // values.
 func CapellaFork(forkHash string) (string, error) {
-	d, ok := capellaForkMap[forkHash]
-	if !ok {
-		return "", errors.New("no capella fork for specified fork")
+	networksMu.Lock()
+	defer networksMu.Unlock()
+
+	for _, n := range supportedNetworks {
+		if n.GenesisForkVersionHex == forkHash {
+			return n.CapellaHardFork, nil
+		}
 	}
 
-	return d, nil
+	return "", errors.New("no capella fork for specified fork")
 }
 
 type forkDataType struct {
@@ -73,17 +69,22 @@ func (e forkDataType) HashTreeRootWith(hh ssz.HashWalker) error {
 
 // ComputeDomain computes the domain for a given domainType, genesisValidatorRoot at the specified fork hash.
 func ComputeDomain(forkHash string, domainType eth2p0.DomainType, genesisValidatorRoot eth2p0.Root) (eth2p0.Domain, error) {
-	fb, err := hex.DecodeString(strings.TrimPrefix(forkHash, "0x"))
+	_, err := hex.DecodeString(strings.TrimPrefix(forkHash, "0x"))
 	if err != nil {
-		return eth2p0.Domain{}, errors.Wrap(err, "fork hash hex")
+		return eth2p0.Domain{}, errors.Wrap(err, "malformed fork hash")
 	}
 
-	_, err = CapellaFork(forkHash)
+	cfork, err := CapellaFork(forkHash)
 	if err != nil {
 		return eth2p0.Domain{}, errors.Wrap(err, "invalid fork hash")
 	}
 
-	rawFdt := forkDataType{GenesisValidatorsRoot: genesisValidatorRoot, CurrentVersion: [4]byte(fb)}
+	cforkHex, err := hex.DecodeString(strings.TrimPrefix(cfork, "0x"))
+	if err != nil {
+		return eth2p0.Domain{}, errors.Wrap(err, "capella fork hash hex")
+	}
+
+	rawFdt := forkDataType{GenesisValidatorsRoot: genesisValidatorRoot, CurrentVersion: [4]byte(cforkHex)}
 	fdt, err := rawFdt.HashTreeRoot()
 	if err != nil {
 		return eth2p0.Domain{}, errors.Wrap(err, "fork data type hash tree root")
