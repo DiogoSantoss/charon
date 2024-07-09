@@ -16,6 +16,7 @@ import (
 	"github.com/obolnetwork/charon/core/alea/vcbc"
 	"github.com/obolnetwork/charon/tbls"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 func TestAlea(t *testing.T) {
@@ -192,14 +193,14 @@ func testAlea(t *testing.T, p testParametersAlea) {
 
 	// Channels for VCBC/ABA/CommonCoin
 
-	vcbcChannels := make([]chan vcbc.VCBCMessage[int64, int64], n)
-	abaChannels := make([]chan aba.ABAMessage[int64], n)
-	commonCoinChannels := make([]chan commoncoin.CommonCoinMessage[int64], n)
+	vcbcChannels := make([]chan vcbc.VCBCMsg[int64, int64], n)
+	abaChannels := make([]chan aba.ABAMsg[int64], n)
+	commonCoinChannels := make([]chan commoncoin.CommonCoinMsg[int64], n)
 
 	for i := 0; i < n; i++ {
-		vcbcChannels[i] = make(chan vcbc.VCBCMessage[int64, int64], 1000)
-		abaChannels[i] = make(chan aba.ABAMessage[int64], 1000)
-		commonCoinChannels[i] = make(chan commoncoin.CommonCoinMessage[int64], 1000)
+		vcbcChannels[i] = make(chan vcbc.VCBCMsg[int64, int64], 1000)
+		abaChannels[i] = make(chan aba.ABAMsg[int64], 1000)
+		commonCoinChannels[i] = make(chan commoncoin.CommonCoinMsg[int64], 1000)
 	}
 
 	// Channel for Alea result
@@ -222,11 +223,28 @@ func testAlea(t *testing.T, p testParametersAlea) {
 			Decide: func(ctx context.Context, instance, result int64) {
 				outputChannel <- result
 			},
-			Nodes: n,
+			DelayABA: true,
+			Nodes:    n,
+		}
+
+		// Skip test
+		if defs.DelayABA == true && len(p.InputValue) < n {
+			t.Skip("Skipping test, DelayABA is true but not enough nodes will VCBC")
 		}
 
 		transABA := aba.Transport[int64]{
-			Broadcast: func(ctx context.Context, msg aba.ABAMessage[int64]) error {
+			Broadcast: func(ctx context.Context, source int64, msgType aba.MsgType,
+				instance int64, agreementRound, round int64, estimative byte,
+				values map[byte]struct{}) error {
+				msg := abaMsg{
+					msgType:        msgType,
+					source:         source,
+					instance:       instance,
+					agreementRound: agreementRound,
+					round:          round,
+					estimative:     estimative,
+					values:         values,
+				}
 				for _, channel := range abaChannels {
 					if channel != nil {
 						channel <- msg
@@ -238,7 +256,9 @@ func testAlea(t *testing.T, p testParametersAlea) {
 		}
 
 		defsABA := aba.Definition{
-			Nodes: n,
+			AsyncCoin: true,
+			FastABA:   true,
+			Nodes:     n,
 		}
 
 		getCommonCoinName := func(instance, agreementRound, abaRound int64) ([]byte, error) {
@@ -248,7 +268,14 @@ func testAlea(t *testing.T, p testParametersAlea) {
 		}
 
 		transCoin := commoncoin.Transport[int64]{
-			Broadcast: func(ctx context.Context, msg commoncoin.CommonCoinMessage[int64]) error {
+			Broadcast: func(ctx context.Context, source int64, instance int64, agreementRound, abaRound int64, sig tbls.Signature) error {
+				msg := commonCoinMsg{
+					source:         source,
+					instance:       instance,
+					agreementRound: agreementRound,
+					abaRound:       abaRound,
+					sig:            sig,
+				}
 				for _, channel := range commonCoinChannels {
 					if channel != nil {
 						channel <- msg
@@ -257,6 +284,7 @@ func testAlea(t *testing.T, p testParametersAlea) {
 				return nil
 			},
 			Receive: commonCoinChannels[i],
+			Refill:  commonCoinChannels[i],
 		}
 
 		defsCoin := commoncoin.Definition[int64]{
@@ -294,23 +322,72 @@ func testAlea(t *testing.T, p testParametersAlea) {
 		}
 
 		transVCBC := vcbc.Transport[int64, int64]{
-			Broadcast: func(ctx context.Context, msg vcbc.VCBCMessage[int64, int64]) error {
-				for _, channel := range vcbcChannels {
-					// Don't send final to requester to simulate lack of final message
-					if msg.Content.MsgType == vcbc.MsgFinal && p.Requester != nil && p.Requester[int64(id)] {
-						continue
-					}
+			BroadcastABA: func(ctx context.Context, source int64, msgType aba.MsgType,
+				instance int64, agreementRound, round int64, estimative byte,
+				values map[byte]struct{}) error {
+				msg := abaMsg{
+					msgType:        msgType,
+					source:         source,
+					instance:       instance,
+					agreementRound: agreementRound,
+					round:          round,
+					estimative:     estimative,
+					values:         values,
+				}
+				for _, channel := range abaChannels {
 					if channel != nil {
 						channel <- msg
 					}
 				}
 				return nil
 			},
-			Unicast: func(ctx context.Context, target int64, msg vcbc.VCBCMessage[int64, int64]) error {
-				vcbcChannels[target-1] <- msg
+			Broadcast: func(ctx context.Context, source int64, msgType vcbc.MsgType, tag string, valueHash []byte,
+				instance int64, value int64,
+				partialSig tbls.Signature, thresholdSig tbls.Signature, sigs map[int64][]byte) error {
+
+				msg := vcbcMsg{
+					source:       source,
+					msgType:      msgType,
+					tag:          tag,
+					valueHash:    valueHash,
+					instance:     instance,
+					value:        value,
+					partialSig:   partialSig,
+					thresholdSig: thresholdSig,
+					sigs:         sigs,
+				}
+
+				for _, channel := range vcbcChannels {
+					// Don't send final to requester to simulate lack of final message
+					if msgType == vcbc.MsgFinal && p.Requester != nil && p.Requester[int64(id)] {
+						continue
+					}
+
+					channel <- msg
+				}
+				return nil
+			},
+			Unicast: func(ctx context.Context, target int64, source int64, msgType vcbc.MsgType, tag string, valueHash []byte,
+				instance int64, value int64,
+				partialSig tbls.Signature, thresholdSig tbls.Signature, sigs map[int64][]byte) error {
+				msg := vcbcMsg{
+					source:       source,
+					msgType:      msgType,
+					tag:          tag,
+					valueHash:    valueHash,
+					instance:     instance,
+					value:        value,
+					partialSig:   partialSig,
+					thresholdSig: thresholdSig,
+					sigs:         sigs,
+				}
+				if vcbcChannels != nil {
+					vcbcChannels[target-1] <- msg
+				}
 				return nil
 			},
 			Receive: vcbcChannels[i],
+			Refill: vcbcChannels[i],
 		}
 
 		hashFunction := sha256.New()
@@ -337,6 +414,9 @@ func testAlea(t *testing.T, p testParametersAlea) {
 			VerifyAggregateSignature: func(data []byte, signature tbls.Signature) error {
 				return tbls.Verify(public, data, signature)
 			},
+			CompleteView:      false,
+			DelayVerification: true,
+
 			// Missing output as it is defined inside Alea
 			Nodes: n,
 		}
@@ -389,11 +469,9 @@ func testAlea(t *testing.T, p testParametersAlea) {
 
 	// Close channels when all done
 	wg.Wait()
-	for i := 0; i < n; i++ {
-		close(vcbcChannels[i])
-		close(abaChannels[i])
-		close(commonCoinChannels[i])
-	}
+	vcbcChannels = nil
+	abaChannels = nil
+	commonCoinChannels = nil
 
 	require.Condition(t, func() (success bool) {
 		if len(resultList) <= 0 {
@@ -408,4 +486,139 @@ func testAlea(t *testing.T, p testParametersAlea) {
 		}
 		return true
 	})
+}
+
+type abaMsg struct {
+	msgType        aba.MsgType
+	source         int64
+	instance       int64
+	agreementRound int64
+	round          int64
+	estimative     byte
+	values         map[byte]struct{}
+}
+
+func (m abaMsg) MsgType() aba.MsgType {
+	return m.msgType
+}
+
+func (m abaMsg) Source() int64 {
+	return m.source
+}
+
+func (m abaMsg) Instance() int64 {
+	return m.instance
+}
+
+func (m abaMsg) AgreementRound() int64 {
+	return m.agreementRound
+}
+
+func (m abaMsg) Round() int64 {
+	return m.round
+}
+
+func (m abaMsg) Estimative() byte {
+	return m.estimative
+}
+
+func (m abaMsg) Values() map[byte]struct{} {
+	return m.values
+}
+
+func (m abaMsg) CloneToInit() aba.ABAMsg[int64] {
+	values := make(map[byte]struct{})
+	for k, v := range m.values {
+		values[k] = v
+	}
+	return abaMsg{
+		msgType:        aba.MsgInit,
+		source:         m.source,
+		instance:       m.instance,
+		agreementRound: m.agreementRound,
+		round:          m.round,
+		estimative:     m.estimative,
+		values:         values,
+	}
+}
+
+type commonCoinMsg struct {
+	source         int64
+	instance       int64
+	agreementRound int64
+	abaRound       int64
+	sig            tbls.Signature
+}
+
+func (m commonCoinMsg) Source() int64 {
+	return m.source
+}
+
+func (m commonCoinMsg) Instance() int64 {
+	return m.instance
+}
+
+func (m commonCoinMsg) AgreementRound() int64 {
+	return m.agreementRound
+}
+
+func (m commonCoinMsg) AbaRound() int64 {
+	return m.abaRound
+}
+
+func (m commonCoinMsg) Sig() tbls.Signature {
+	return m.sig
+}
+
+type vcbcMsg struct {
+	source       int64
+	msgType      vcbc.MsgType
+	tag          string // Tag is an identifier of type: "ID.<id>.<instance>" where <id> is the sender id and <instance> is an instance identifier
+	valueHash    []byte
+	instance     int64
+	value        int64
+	realValue    *anypb.Any // Only sent inside Final message
+	partialSig   tbls.Signature
+	thresholdSig tbls.Signature
+	sigs         map[int64][]byte
+}
+
+func (m vcbcMsg) Source() int64 {
+	return m.source
+}
+
+func (m vcbcMsg) MsgType() vcbc.MsgType {
+	return vcbc.MsgType(m.msgType)
+}
+
+func (m vcbcMsg) Tag() string {
+	return m.tag
+}
+
+func (m vcbcMsg) ValueHash() []byte {
+	return m.valueHash
+}
+
+func (m vcbcMsg) Instance() int64 {
+	return m.instance
+}
+
+func (m vcbcMsg) Value() int64 {
+	return m.value
+}
+
+func (m vcbcMsg) RealValue() *anypb.Any {
+	return m.realValue
+}
+
+func (m vcbcMsg) PartialSig() tbls.Signature {
+	return tbls.Signature(m.partialSig)
+}
+
+func (m vcbcMsg) ThresholdSig() tbls.Signature {
+	return tbls.Signature(m.thresholdSig)
+}
+
+func (m vcbcMsg) Signatures() map[int64][]byte {
+	return m.sigs
 }

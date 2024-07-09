@@ -39,9 +39,10 @@ const (
 	DutyPrepareSyncContribution DutyType = 11
 	DutySyncContribution        DutyType = 12
 	DutyInfoSync                DutyType = 13
+	DutyTest                    DutyType = 14
 	// Only ever append new types here...
 
-	dutySentinel DutyType = 14 // Must always be last
+	dutySentinel DutyType = 15 // Must always be last
 )
 
 func (d DutyType) Valid() bool {
@@ -64,6 +65,7 @@ func (d DutyType) String() string {
 		DutyPrepareSyncContribution: "prepare_sync_contribution",
 		DutySyncContribution:        "sync_contribution",
 		DutyInfoSync:                "info_sync",
+		DutyTest:                    "test",
 	}[d]
 }
 

@@ -163,11 +163,11 @@ func testABA(t *testing.T, params testParametersABA) {
 	}
 
 	// Create channels
-	commonCoinChannels := make([]chan commoncoin.CommonCoinMessage[int64], n)
-	abaChannels := make([]chan ABAMessage[int64], n)
+	commonCoinChannels := make([]chan commoncoin.CommonCoinMsg[int64], n)
+	abaChannels := make([]chan ABAMsg[int64], n)
 	for i := 0; i < n; i++ {
-		commonCoinChannels[i] = make(chan commoncoin.CommonCoinMessage[int64], 1000)
-		abaChannels[i] = make(chan ABAMessage[int64], 1000)
+		commonCoinChannels[i] = make(chan commoncoin.CommonCoinMsg[int64], 1000)
+		abaChannels[i] = make(chan ABAMsg[int64], 1000)
 	}
 
 	// Store results
@@ -186,7 +186,19 @@ func testABA(t *testing.T, params testParametersABA) {
 		id := i + 1
 
 		trans := Transport[int64]{
-			Broadcast: func(ctx context.Context, msg ABAMessage[int64]) error {
+			Broadcast: func(ctx context.Context, source int64, msgType MsgType,
+				instance int64, agreementRound, round int64, estimative byte,
+				values map[byte]struct{}) error {
+				msg := msg{
+					msgType:        msgType,
+					source:         source,
+					instance:       instance,
+					agreementRound: agreementRound,
+					round:          round,
+					estimative:     estimative,
+					values:         values,
+				}
+
 				for _, channel := range abaChannels {
 					channel <- msg
 				}
@@ -196,17 +208,28 @@ func testABA(t *testing.T, params testParametersABA) {
 		}
 
 		transCoin := commoncoin.Transport[int64]{
-			Broadcast: func(ctx context.Context, msg commoncoin.CommonCoinMessage[int64]) error {
+			Broadcast: func(ctx context.Context, source int64, instance int64, agreementRound, abaRound int64, sig tbls.Signature) error {
+				msg := commonCoinMsg{
+					source:         source,
+					instance:       instance,
+					agreementRound: agreementRound,
+					abaRound:       abaRound,
+					sig:            sig,
+				}
+
 				for _, channel := range commonCoinChannels {
 					channel <- msg
 				}
 				return nil
 			},
 			Receive: commonCoinChannels[i],
+			Refill:  commonCoinChannels[i],
 		}
 
 		defs := Definition{
-			Nodes: n,
+			FastABA:   true,
+			AsyncCoin: true,
+			Nodes:     n,
 		}
 
 		getCommonCoinName := func(instance, agreementRound, abaRound int64) ([]byte, error) {
@@ -276,10 +299,8 @@ func testABA(t *testing.T, params testParametersABA) {
 	go func() {
 		wg.Wait()
 		close(resultChan)
-		for i := 0; i < n; i++ {
-			close(commonCoinChannels[i])
-			close(abaChannels[i])
-		}
+		commonCoinChannels = nil
+		abaChannels = nil
 	}()
 
 	for result := range resultChan {
@@ -301,4 +322,86 @@ func testABA(t *testing.T, params testParametersABA) {
 
 		return true
 	})
+}
+
+type msg struct {
+	msgType        MsgType
+	source         int64
+	instance       int64
+	agreementRound int64
+	round          int64
+	estimative     byte
+	values         map[byte]struct{}
+}
+
+func (m msg) MsgType() MsgType {
+	return m.msgType
+}
+
+func (m msg) Source() int64 {
+	return m.source
+}
+
+func (m msg) Instance() int64 {
+	return m.instance
+}
+
+func (m msg) AgreementRound() int64 {
+	return m.agreementRound
+}
+
+func (m msg) Round() int64 {
+	return m.round
+}
+
+func (m msg) Estimative() byte {
+	return m.estimative
+}
+
+func (m msg) Values() map[byte]struct{} {
+	return m.values
+}
+
+func (m msg) CloneToInit() ABAMsg[int64] {
+	values := make(map[byte]struct{})
+	for k, v := range m.values {
+		values[k] = v
+	}
+	return msg{
+		msgType:        MsgInit,
+		source:         m.source,
+		instance:       m.instance,
+		agreementRound: m.agreementRound,
+		round:          m.round,
+		estimative:     m.estimative,
+		values:         values,
+	}
+}
+
+type commonCoinMsg struct {
+	source         int64
+	instance       int64
+	agreementRound int64
+	abaRound       int64
+	sig            tbls.Signature
+}
+
+func (m commonCoinMsg) Source() int64 {
+	return m.source
+}
+
+func (m commonCoinMsg) Instance() int64 {
+	return m.instance
+}
+
+func (m commonCoinMsg) AgreementRound() int64 {
+	return m.agreementRound
+}
+
+func (m commonCoinMsg) AbaRound() int64 {
+	return m.abaRound
+}
+
+func (m commonCoinMsg) Sig() tbls.Signature {
+	return m.sig
 }

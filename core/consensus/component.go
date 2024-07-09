@@ -13,6 +13,7 @@ import (
 	"time"
 
 	k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
@@ -146,9 +147,9 @@ func newInstanceIO() instanceIO {
 		errCh:        make(chan error, 1),
 		decidedAtCh:  make(chan time.Time, 1),
 
-		recvBufferCoin: make(chan *pbv1.CommonCoinMsg, recvBuffer),
-		recvBufferVCBC: make(chan *pbv1.VCBCMsg, recvBuffer),
-		recvBufferABA:  make(chan *pbv1.ABAMsg, recvBuffer),
+		recvBufferCoin: make(chan commonCoinMsg, recvBuffer),
+		recvBufferVCBC: make(chan vcbcMsg, recvBuffer),
+		recvBufferABA:  make(chan abaMsg, recvBuffer),
 	}
 }
 
@@ -164,9 +165,9 @@ type instanceIO struct {
 	errCh        chan error         // Async output error channel.
 	decidedAtCh  chan time.Time     // Async output decided timestamp channel.
 
-	recvBufferCoin chan *pbv1.CommonCoinMsg
-	recvBufferVCBC chan *pbv1.VCBCMsg
-	recvBufferABA  chan *pbv1.ABAMsg
+	recvBufferCoin chan commonCoinMsg
+	recvBufferVCBC chan vcbcMsg
+	recvBufferABA  chan abaMsg
 }
 
 // MarkParticipated marks the instance as participated.
@@ -346,6 +347,9 @@ func (c *Component) Start(ctx context.Context) {
 // waits until it completes, in both cases it returns the resulting error.
 // Note this errors if called multiple times for the same duty.
 func (c *Component) Propose(ctx context.Context, duty core.Duty, data core.UnsignedDataSet) error {
+	p, _ := c.getPeerIdx()
+	core.RecordStep(p, core.START_SETUP)
+
 	// Hash the proposed data, since qbft only supports simple comparable values.
 	value, err := core.UnsignedDataSetToProto(data)
 	if err != nil {
@@ -550,7 +554,9 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 	}
 
 	dABA := aba.Definition{
-		Nodes: len(c.peers),
+		AsyncCoin: true,
+		FastABA:   true,
+		Nodes:     len(c.peers),
 	}
 
 	hashFunction := sha256.New()
@@ -578,6 +584,31 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 			return tbls.Verify(pubKey, data, signature)
 		},
 
+		CompleteView:      true,
+		DelayVerification: true,
+		MultiSignature:    true,
+
+		SignDataMultiSig: func(data []byte) ([]byte, error) {
+			return ecdsa.Sign(c.privkey, data).Serialize(), nil
+		},
+		VerifySignatureMultiSig: func(process int64, data []byte, signature []byte) error {
+			pubkey, err := c.peers[process-1].PublicKey()
+			if err != nil {
+				return err
+			}
+
+			sig, err := ecdsa.ParseDERSignature(signature)
+			if err != nil {
+				return err
+			}
+
+			if sig.Verify(data, pubkey) {
+				return nil
+			}
+
+			return errors.New("failed to verify signature")
+		},
+
 		Nodes: len(c.peers),
 	}
 
@@ -587,9 +618,9 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 		values:         make(map[[32]byte]*anypb.Any),
 		valueCh:        inst.valueCh,
 		recvBuffer:     make(chan qbft.Msg[core.Duty, [32]byte]),
-		recvBufferCoin: make(chan commoncoin.CommonCoinMessage[core.Duty]),
-		recvBufferABA:  make(chan aba.ABAMessage[core.Duty]),
-		recvBufferVCBC: make(chan vcbc.VCBCMessage[core.Duty, [32]byte]),
+		recvBufferCoin: make(chan commoncoin.CommonCoinMsg[core.Duty]),
+		recvBufferABA:  make(chan aba.ABAMsg[core.Duty]),
+		recvBufferVCBC: make(chan vcbc.VCBCMsg[core.Duty, [32]byte]),
 		sniffer:        newSniffer(int64(def.Nodes), peerIdx),
 	}
 
@@ -625,6 +656,9 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 			}
 		},
 
+		// If this is disabled, so should be the CompleteView
+		DelayABA: true,
+
 		Nodes: len(c.peers),
 	}
 
@@ -648,19 +682,24 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 	tCoin := commoncoin.Transport[core.Duty]{
 		Broadcast: t.BroadcastCoin,
 		Receive:   t.recvBufferCoin,
+		Refill:    t.recvBufferCoin,
 	}
 
 	tABA := aba.Transport[core.Duty]{
 		Broadcast: t.BroadcastABA,
 		Receive:   t.recvBufferABA,
+		Refill:    t.recvBufferABA,
 	}
 
 	tVCBC := vcbc.Transport[core.Duty, [32]byte]{
-		Broadcast: t.BroadcastVCBC,
-		Unicast:   t.UnicastVCBC,
-		Receive:   t.recvBufferVCBC,
+		BroadcastABA: t.BroadcastABA,
+		Broadcast:    t.BroadcastVCBC,
+		Unicast:      t.UnicastVCBC,
+		Receive:      t.recvBufferVCBC,
+		Refill:       t.recvBufferVCBC,
 	}
 
+	core.RecordStep(peerIdx, core.FINISH_SETUP)
 	testingAlea := true
 
 	if testingAlea {
@@ -678,7 +717,6 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 			return err // Only return non-context errors.
 		}
 	}
-
 	if !decided {
 		consensusTimeout.WithLabelValues(duty.Type.String(), string(roundTimer.Type())).Inc()
 
@@ -689,7 +727,7 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 }
 
 // handle processes an incoming consensus wire message.
-func (c *Component) handle(ctx context.Context, _ peer.ID, req proto.Message) (proto.Message, bool, error) {
+func (c *Component) handle(ctx context.Context, p peer.ID, req proto.Message) (proto.Message, bool, error) {
 	t0 := time.Now()
 
 	pbMsg, ok := req.(*pbv1.ConsensusMsg)
@@ -753,10 +791,6 @@ func (c *Component) handle(ctx context.Context, _ peer.ID, req proto.Message) (p
 	}
 }
 
-// 1. Handle proto.Message
-// 2. Verify message
-// 3. Verify duty
-// 4. Enqueue in component buffer
 func (c *Component) handleCoin(ctx context.Context, _ peer.ID, req proto.Message) (proto.Message, bool, error) {
 	t0 := time.Now()
 
@@ -765,7 +799,7 @@ func (c *Component) handleCoin(ctx context.Context, _ peer.ID, req proto.Message
 		return nil, false, errors.New("invalid consensus message")
 	}
 
-	if err := verifyCoinMsg(pbMsg, c.pubkeys); err != nil {
+	if err := verifyCommonCoinMsg(pbMsg, c.pubkeys); err != nil {
 		return nil, false, err
 	}
 
@@ -787,8 +821,12 @@ func (c *Component) handleCoin(ctx context.Context, _ peer.ID, req proto.Message
 		return nil, false, errors.New("duty expired", z.Any("duty", duty), c.dropFilter)
 	}
 
+	msg := commonCoinMsg{
+		msg: pbMsg,
+	}
+
 	select {
-	case c.getRecvBufferCoin(duty) <- pbMsg:
+	case c.getRecvBufferCoin(duty) <- msg:
 		return nil, false, nil
 	case <-ctx.Done():
 		return nil, false, errors.Wrap(ctx.Err(), "timeout enqueuing receive buffer",
@@ -826,8 +864,12 @@ func (c *Component) handleABA(ctx context.Context, _ peer.ID, req proto.Message)
 		return nil, false, errors.New("duty expired", z.Any("duty", duty), c.dropFilter)
 	}
 
+	msg := abaMsg{
+		msg: pbMsg,
+	}
+
 	select {
-	case c.getRecvBufferABA(duty) <- pbMsg:
+	case c.getRecvBufferABA(duty) <- msg:
 		return nil, false, nil
 	case <-ctx.Done():
 		return nil, false, errors.Wrap(ctx.Err(), "timeout enqueuing receive buffer",
@@ -839,6 +881,7 @@ func (c *Component) handleVCBC(ctx context.Context, _ peer.ID, req proto.Message
 	t0 := time.Now()
 
 	pbMsg, ok := req.(*pbv1.VCBCMsg)
+
 	if !ok || pbMsg == nil {
 		return nil, false, errors.New("invalid consensus message")
 	}
@@ -865,23 +908,12 @@ func (c *Component) handleVCBC(ctx context.Context, _ peer.ID, req proto.Message
 		return nil, false, errors.New("duty expired", z.Any("duty", duty), c.dropFilter)
 	}
 
-	// DEBUG
-	//var myId int
-	//for i, p := range c.peers {
-	//	if c.tcpNode.ID() == p.ID {
-	//		myId = i
-	//	}
-	//}
-	//if vcbc.MsgType(pbMsg.Content.Type) == vcbc.MsgFinal {
-	//	log.Debug(ctx, "receiving final from", z.Any("from node",pbMsg.Source-1), z.Any("my node", myId))
-	//}
+	msg := vcbcMsg{
+		msg: pbMsg,
+	}
 
 	select {
-	case c.getRecvBufferVCBC(duty) <- pbMsg:
-		// DEBUG
-		//if vcbc.MsgType(pbMsg.Content.Type) == vcbc.MsgFinal {
-		//	log.Debug(ctx, "received final from", z.Any("from node",pbMsg.Source-1), z.Any("my node", myId))
-		//}
+	case c.getRecvBufferVCBC(duty) <- msg:
 		return nil, false, nil
 	case <-ctx.Done():
 		return nil, false, errors.Wrap(ctx.Err(), "timeout enqueuing receive buffer",
@@ -903,7 +935,7 @@ func (c *Component) getRecvBuffer(duty core.Duty) chan msg {
 	return inst.recvBuffer
 }
 
-func (c *Component) getRecvBufferCoin(duty core.Duty) chan *pbv1.CommonCoinMsg {
+func (c *Component) getRecvBufferCoin(duty core.Duty) chan commonCoinMsg {
 	c.mutable.Lock()
 	defer c.mutable.Unlock()
 
@@ -916,7 +948,7 @@ func (c *Component) getRecvBufferCoin(duty core.Duty) chan *pbv1.CommonCoinMsg {
 	return inst.recvBufferCoin
 }
 
-func (c *Component) getRecvBufferABA(duty core.Duty) chan *pbv1.ABAMsg {
+func (c *Component) getRecvBufferABA(duty core.Duty) chan abaMsg {
 	c.mutable.Lock()
 	defer c.mutable.Unlock()
 
@@ -929,7 +961,7 @@ func (c *Component) getRecvBufferABA(duty core.Duty) chan *pbv1.ABAMsg {
 	return inst.recvBufferABA
 }
 
-func (c *Component) getRecvBufferVCBC(duty core.Duty) chan *pbv1.VCBCMsg {
+func (c *Component) getRecvBufferVCBC(duty core.Duty) chan vcbcMsg {
 	c.mutable.Lock()
 	defer c.mutable.Unlock()
 
@@ -1016,7 +1048,7 @@ func verifyMsg(msg *pbv1.QBFTMsg, pubkeys map[int64]*k1.PublicKey) error {
 }
 
 // TODO
-func verifyCoinMsg(msg *pbv1.CommonCoinMsg, pubKeys map[int64]*k1.PublicKey) error {
+func verifyCommonCoinMsg(msg *pbv1.CommonCoinMsg, pubKeys map[int64]*k1.PublicKey) error {
 	return nil
 }
 
