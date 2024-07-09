@@ -6,7 +6,7 @@ on:
       - main*
 jobs:
   pre-commit:
-    runs-on: ubuntu-latest
+    runs-on: charon-ci
     env:
       SKIP: golangci-lint,run-go-tests,no-commit-to-branch
     steps:
@@ -14,9 +14,7 @@ jobs:
         with:
           fetch-depth: 0 # Disable shallow checkout
       - uses: actions/setup-python@v2
-      - uses: actions/setup-go@v4
-        with:
-          go-version: '1.22.1'
+      - uses: ./.github/actions/setup-go
       - uses: pre-commit/action@v2.0.3
 
       - name: notify failure

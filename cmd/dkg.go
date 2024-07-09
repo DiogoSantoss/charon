@@ -46,6 +46,8 @@ this command at the same time.`,
 	bindPublishFlags(cmd.Flags(), &config)
 	bindShutdownDelayFlag(cmd.Flags(), &config.ShutdownDelay)
 
+	cmd.Flags().DurationVar(&config.Timeout, "timeout", 1*time.Minute, "Timeout for the DKG process, should be increased if DKG times out.")
+
 	return cmd
 }
 
@@ -64,6 +66,7 @@ func bindDataDirFlag(flags *pflag.FlagSet, dataDir *string) {
 
 func bindPublishFlags(flags *pflag.FlagSet, config *dkg.Config) {
 	flags.StringVar(&config.PublishAddr, "publish-address", "https://api.obol.tech", "The URL to publish the cluster to.")
+	flags.DurationVar(&config.PublishTimeout, "publish-timeout", 30*time.Second, "Timeout for publishing a cluster, consider increasing if the cluster contains more than 200 validators.")
 	flags.BoolVar(&config.Publish, "publish", false, "Publish the created cluster to a remote API.")
 }
 

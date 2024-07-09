@@ -73,41 +73,46 @@ func (b Broadcaster) Broadcast(ctx context.Context, duty core.Duty, set core.Sig
 			return err
 		}
 
-		block, ok := aggData.(core.VersionedSignedProposal)
+		var (
+			block core.VersionedSignedProposal
+			ok    bool
+		)
+
+		block, ok = aggData.(core.VersionedSignedProposal)
 		if !ok {
 			return errors.New("invalid proposal")
 		}
 
-		err = b.eth2Cl.SubmitProposal(ctx, &block.VersionedSignedProposal)
+		switch block.Blinded {
+		case true:
+			var blinded eth2api.VersionedSignedBlindedProposal
+
+			blinded, err = block.ToBlinded()
+			if err != nil {
+				return errors.Wrap(err, "cannot broadcast, expected blinded proposal")
+			}
+
+			err = b.eth2Cl.SubmitBlindedProposal(ctx, &eth2api.SubmitBlindedProposalOpts{
+				Proposal: &blinded,
+			})
+		default:
+			err = b.eth2Cl.SubmitProposal(ctx, &eth2api.SubmitProposalOpts{
+				Proposal: &block.VersionedSignedProposal,
+			})
+		}
+
 		if err == nil {
 			log.Info(ctx, "Successfully submitted block proposal to beacon node",
 				z.Any("delay", b.delayFunc(duty.Slot)),
 				z.Any("pubkey", pubkey),
+				z.Bool("blinded", block.Blinded),
 			)
 		}
 
 		return err
 
 	case core.DutyBuilderProposer:
-		pubkey, aggData, err := setToOne(set)
-		if err != nil {
-			return err
-		}
-
-		block, ok := aggData.(core.VersionedSignedBlindedProposal)
-		if !ok {
-			return errors.New("invalid blinded proposal")
-		}
-
-		err = b.eth2Cl.SubmitBlindedProposal(ctx, &block.VersionedSignedBlindedProposal)
-		if err == nil {
-			log.Info(ctx, "Successfully submitted blinded block proposal to beacon node",
-				z.Any("delay", b.delayFunc(duty.Slot)),
-				z.Any("pubkey", pubkey),
-			)
-		}
-
-		return err
+		return core.ErrDeprecatedDutyBuilderProposer
 
 	case core.DutyBuilderRegistration:
 		slot, err := firstSlotInCurrentEpoch(ctx, b.eth2Cl)

@@ -464,29 +464,32 @@ func RandomCapellaBlindedBeaconBlockBody() *eth2capella.BlindedBeaconBlockBody {
 	}
 }
 
-func RandomBellatrixVersionedBlindedProposal() core.VersionedBlindedProposal {
-	return core.VersionedBlindedProposal{
-		VersionedBlindedProposal: eth2api.VersionedBlindedProposal{
-			Version:   eth2spec.DataVersionBellatrix,
-			Bellatrix: RandomBellatrixBlindedBeaconBlock(),
+func RandomBellatrixVersionedBlindedProposal() core.VersionedProposal {
+	return core.VersionedProposal{
+		VersionedProposal: eth2api.VersionedProposal{
+			Version:          eth2spec.DataVersionBellatrix,
+			Blinded:          true,
+			BellatrixBlinded: RandomBellatrixBlindedBeaconBlock(),
 		},
 	}
 }
 
-func RandomCapellaVersionedBlindedProposal() core.VersionedBlindedProposal {
-	return core.VersionedBlindedProposal{
-		VersionedBlindedProposal: eth2api.VersionedBlindedProposal{
-			Version: eth2spec.DataVersionCapella,
-			Capella: RandomCapellaBlindedBeaconBlock(),
+func RandomCapellaVersionedBlindedProposal() core.VersionedProposal {
+	return core.VersionedProposal{
+		VersionedProposal: eth2api.VersionedProposal{
+			Version:        eth2spec.DataVersionCapella,
+			Blinded:        true,
+			CapellaBlinded: RandomCapellaBlindedBeaconBlock(),
 		},
 	}
 }
 
-func RandomBellatrixVersionedSignedBlindedProposal() core.VersionedSignedBlindedProposal {
-	return core.VersionedSignedBlindedProposal{
-		VersionedSignedBlindedProposal: eth2api.VersionedSignedBlindedProposal{
+func RandomBellatrixVersionedSignedBlindedProposal() core.VersionedSignedProposal {
+	return core.VersionedSignedProposal{
+		VersionedSignedProposal: eth2api.VersionedSignedProposal{
+			Blinded: true,
 			Version: eth2spec.DataVersionBellatrix,
-			Bellatrix: &eth2bellatrix.SignedBlindedBeaconBlock{
+			BellatrixBlinded: &eth2bellatrix.SignedBlindedBeaconBlock{
 				Message:   RandomBellatrixBlindedBeaconBlock(),
 				Signature: RandomEth2Signature(),
 			},
@@ -494,11 +497,12 @@ func RandomBellatrixVersionedSignedBlindedProposal() core.VersionedSignedBlinded
 	}
 }
 
-func RandomCapellaVersionedSignedBlindedProposal() core.VersionedSignedBlindedProposal {
-	return core.VersionedSignedBlindedProposal{
-		VersionedSignedBlindedProposal: eth2api.VersionedSignedBlindedProposal{
+func RandomCapellaVersionedSignedBlindedProposal() core.VersionedSignedProposal {
+	return core.VersionedSignedProposal{
+		VersionedSignedProposal: eth2api.VersionedSignedProposal{
+			Blinded: true,
 			Version: eth2spec.DataVersionCapella,
-			Capella: &eth2capella.SignedBlindedBeaconBlock{
+			CapellaBlinded: &eth2capella.SignedBlindedBeaconBlock{
 				Message:   RandomCapellaBlindedBeaconBlock(),
 				Signature: RandomEth2Signature(),
 			},
@@ -506,11 +510,12 @@ func RandomCapellaVersionedSignedBlindedProposal() core.VersionedSignedBlindedPr
 	}
 }
 
-func RandomDenebVersionedSignedBlindedProposal() core.VersionedSignedBlindedProposal {
-	return core.VersionedSignedBlindedProposal{
-		VersionedSignedBlindedProposal: eth2api.VersionedSignedBlindedProposal{
+func RandomDenebVersionedSignedBlindedProposal() core.VersionedSignedProposal {
+	return core.VersionedSignedProposal{
+		VersionedSignedProposal: eth2api.VersionedSignedProposal{
+			Blinded: true,
 			Version: eth2spec.DataVersionDeneb,
-			Deneb: &eth2deneb.SignedBlindedBeaconBlock{
+			DenebBlinded: &eth2deneb.SignedBlindedBeaconBlock{
 				Message:   RandomDenebBlindedBeaconBlock(),
 				Signature: RandomEth2Signature(),
 			},

@@ -57,10 +57,9 @@ type trackerInclFunc func(core.Duty, core.PubKey, core.SignedData, error)
 
 // inclSupported defines duty types for which inclusion checks are supported.
 var inclSupported = map[core.DutyType]bool{
-	core.DutyAttester:        true,
-	core.DutyAggregator:      true,
-	core.DutyProposer:        true,
-	core.DutyBuilderProposer: true,
+	core.DutyAttester:   true,
+	core.DutyAggregator: true,
+	core.DutyProposer:   true,
 	// TODO(corver) Add support for sync committee and exit duties
 }
 
@@ -77,14 +76,13 @@ type inclusionCore struct {
 
 // Submitted is called when a duty is submitted to the beacon node.
 // It adds the duty to the list of submitted duties.
-func (i *inclusionCore) Submitted(duty core.Duty, pubkey core.PubKey, data core.SignedData, delay time.Duration) error {
+func (i *inclusionCore) Submitted(duty core.Duty, pubkey core.PubKey, data core.SignedData, delay time.Duration) (err error) {
 	if !inclSupported[duty.Type] {
 		return nil
 	}
 
 	var (
 		attRoot eth2p0.Root
-		err     error
 	)
 	if duty.Type == core.DutyAttester {
 		att, ok := data.(core.Attestation)
@@ -105,27 +103,48 @@ func (i *inclusionCore) Submitted(duty core.Duty, pubkey core.PubKey, data core.
 			return errors.Wrap(err, "hash aggregate")
 		}
 	} else if duty.Type == core.DutyProposer {
-		proposal, ok := data.(core.VersionedSignedProposal)
+		var (
+			block core.VersionedSignedProposal
+			ok    bool
+		)
+
+		block, ok = data.(core.VersionedSignedProposal)
 		if !ok {
 			return errors.New("invalid block")
 		}
-		if eth2wrap.IsSyntheticProposal(&proposal.VersionedSignedProposal) {
-			// Report inclusion for synthetic blocks as it is already included on-chain.
-			i.trackerInclFunc(duty, pubkey, data, nil)
 
-			return nil
+		defer func() {
+			if r := recover(); r != nil {
+				err = errors.New("could not determine if proposal was synthetic or not",
+					z.Str("proposal", fmt.Sprintf("%+v", block)),
+					z.Bool("blinded", block.Blinded),
+				)
+			}
+		}()
+
+		switch block.Blinded {
+		case true:
+			blinded, err := block.ToBlinded()
+			if err != nil {
+				return errors.Wrap(err, "expected blinded proposal")
+			}
+
+			if eth2wrap.IsSyntheticBlindedBlock(&blinded) {
+				// Report inclusion for synthetic blocks as it is already included on-chain.
+				i.trackerInclFunc(duty, pubkey, data, nil)
+
+				return nil
+			}
+		default:
+			if eth2wrap.IsSyntheticProposal(&block.VersionedSignedProposal) {
+				// Report inclusion for synthetic blocks as it is already included on-chain.
+				i.trackerInclFunc(duty, pubkey, data, nil)
+
+				return nil
+			}
 		}
 	} else if duty.Type == core.DutyBuilderProposer {
-		block, ok := data.(core.VersionedSignedBlindedProposal)
-		if !ok {
-			return errors.New("invalid blinded block")
-		}
-		if eth2wrap.IsSyntheticBlindedBlock(&block.VersionedSignedBlindedProposal) {
-			// Report inclusion for synthetic blinded blocks as it is already included on-chain.
-			i.trackerInclFunc(duty, pubkey, data, nil)
-
-			return nil
-		}
+		return core.ErrDeprecatedDutyBuilderProposer
 	}
 
 	i.mu.Lock()
@@ -140,7 +159,7 @@ func (i *inclusionCore) Submitted(duty core.Duty, pubkey core.PubKey, data core.
 		Delay:       delay,
 	}
 
-	return nil
+	return err
 }
 
 // Trim removes all duties that are older than the specified slot.
@@ -193,13 +212,19 @@ func (i *inclusionCore) CheckBlock(ctx context.Context, block block) {
 			i.attIncludedFunc(ctx, sub, block)
 			i.trackerInclFunc(sub.Duty, sub.Pubkey, sub.Data, nil)
 			delete(i.submissions, key)
-		case core.DutyProposer, core.DutyBuilderProposer:
+		case core.DutyProposer:
 			if sub.Duty.Slot != block.Slot {
 				continue
 			}
 
+			proposal, ok := sub.Data.(core.VersionedSignedProposal)
+			if !ok {
+				log.Error(ctx, "Submission data has wrong type", nil, z.Str("type", fmt.Sprintf("%T", sub.Data)))
+				continue
+			}
+
 			msg := "Broadcasted block included on-chain"
-			if sub.Duty.Type == core.DutyBuilderProposer {
+			if proposal.Blinded {
 				msg = "Broadcasted blinded block included on-chain"
 			}
 
@@ -272,17 +297,22 @@ func reportMissed(ctx context.Context, sub submission) {
 			z.U64("attestation_slot", sub.Duty.Slot),
 			z.Any("broadcast_delay", sub.Delay),
 		)
-	case core.DutyProposer, core.DutyBuilderProposer:
-		msg := "Broadcasted block never included on-chain"
-		if sub.Duty.Type == core.DutyBuilderProposer {
-			msg = "Broadcasted blinded block never included on-chain"
-		}
+	case core.DutyProposer:
+		proposal, ok := sub.Data.(core.VersionedSignedProposal)
+		if !ok {
+			log.Error(ctx, "Submission data has wrong type", nil, z.Str("type", fmt.Sprintf("%T", sub.Data)))
+		} else {
+			msg := "Broadcasted block never included on-chain"
+			if proposal.Blinded {
+				msg = "Broadcasted blinded block never included on-chain"
+			}
 
-		log.Warn(ctx, msg, nil,
-			z.Any("pubkey", sub.Pubkey),
-			z.U64("block_slot", sub.Duty.Slot),
-			z.Any("broadcast_delay", sub.Delay),
-		)
+			log.Warn(ctx, msg, nil,
+				z.Any("pubkey", sub.Pubkey),
+				z.U64("block_slot", sub.Duty.Slot),
+				z.Any("broadcast_delay", sub.Delay),
+			)
+		}
 	default:
 		panic("bug: unexpected type") // Sanity check, this should never happen
 	}

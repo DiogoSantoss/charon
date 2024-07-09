@@ -141,10 +141,8 @@ func (s *Scheduler) emitCoreSlot(ctx context.Context, slot core.Slot) {
 // GetDutyDefinition returns the definition for a duty or core.ErrNotFound if no definitions exist for a resolved epoch
 // or another error.
 func (s *Scheduler) GetDutyDefinition(ctx context.Context, duty core.Duty) (core.DutyDefinitionSet, error) {
-	if duty.Type == core.DutyBuilderProposer && !s.builderEnabled(duty.Slot) {
-		return nil, errors.New("builder-api not enabled, but duty builder proposer requested")
-	} else if duty.Type == core.DutyProposer && s.builderEnabled(duty.Slot) {
-		return nil, errors.New("builder-api enabled, but duty proposer requested")
+	if duty.Type == core.DutyBuilderProposer {
+		return nil, core.ErrDeprecatedDutyBuilderProposer
 	}
 
 	slotsPerEpoch, err := s.eth2Cl.SlotsPerEpoch(ctx)
@@ -247,7 +245,7 @@ func delaySlotOffset(ctx context.Context, slot core.Slot, duty core.Duty, delayF
 
 // resolveDuties resolves the duties for the slot's epoch, caching the results.
 func (s *Scheduler) resolveDuties(ctx context.Context, slot core.Slot) error {
-	vals, err := resolveActiveValidators(ctx, s.eth2Cl, s.pubkeys, s.metricSubmitter, slot.Epoch())
+	vals, err := resolveActiveValidators(ctx, s.eth2Cl, s.metricSubmitter, slot.Epoch())
 	if err != nil {
 		return err
 	}
@@ -386,13 +384,7 @@ func (s *Scheduler) resolveProDuties(ctx context.Context, slot core.Slot, vals v
 			continue
 		}
 
-		var duty core.Duty
-
-		if s.builderEnabled(uint64(proDuty.Slot)) {
-			duty = core.Duty{Slot: uint64(proDuty.Slot), Type: core.DutyBuilderProposer}
-		} else {
-			duty = core.Duty{Slot: uint64(proDuty.Slot), Type: core.DutyProposer}
-		}
+		duty := core.NewProposerDuty(uint64(proDuty.Slot))
 
 		pubkey, ok := vals.PubKeyFromIndex(proDuty.ValidatorIndex)
 		if !ok {
@@ -623,31 +615,15 @@ func newSlotTicker(ctx context.Context, eth2Cl eth2wrap.Client, clock clockwork.
 }
 
 // resolveActiveValidators returns the active validators (including their validator index) for the slot.
-func resolveActiveValidators(ctx context.Context, eth2Cl eth2wrap.Client,
-	pubkeys []core.PubKey, submitter metricSubmitter, epoch uint64,
+func resolveActiveValidators(ctx context.Context, eth2Cl eth2wrap.Client, submitter metricSubmitter, epoch uint64,
 ) (validators, error) {
-	var e2pks []eth2p0.BLSPubKey
-	for _, pubkey := range pubkeys {
-		e2pk, err := pubkey.ToETH2()
-		if err != nil {
-			return nil, err
-		}
-
-		e2pks = append(e2pks, e2pk)
-	}
-
-	opts := &eth2api.ValidatorsOpts{
-		State:   "head",
-		PubKeys: e2pks,
-	}
-	eth2Resp, err := eth2Cl.Validators(ctx, opts)
+	eth2Resp, err := eth2Cl.CompleteValidators(ctx)
 	if err != nil {
 		return nil, err
 	}
-	vals := eth2Resp.Data
 
 	var resp []validator
-	for index, val := range vals {
+	for index, val := range eth2Resp {
 		if val == nil || val.Validator == nil {
 			return nil, errors.New("validator data cannot be nil")
 		}

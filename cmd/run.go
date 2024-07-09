@@ -85,6 +85,7 @@ func bindRunFlags(cmd *cobra.Command, config *app.Config) {
 	cmd.Flags().StringVar(&config.TestnetConfig.GenesisForkVersionHex, "testnet-fork-version", "", "Genesis fork version in hex of the custom test network.")
 	cmd.Flags().Uint64Var(&config.TestnetConfig.ChainID, "testnet-chain-id", 0, "Chain ID of the custom test network.")
 	cmd.Flags().Int64Var(&config.TestnetConfig.GenesisTimestamp, "testnet-genesis-timestamp", 0, "Genesis timestamp of the custom test network.")
+	cmd.Flags().StringVar(&config.TestnetConfig.CapellaHardFork, "testnet-capella-hard-fork", "", "Capella hard fork version of the custom test network.")
 
 	wrapPreRunE(cmd, func(cmd *cobra.Command, args []string) error {
 		if len(config.BeaconNodeAddrs) == 0 && !config.SimnetBMock {
@@ -125,7 +126,7 @@ func bindP2PFlags(cmd *cobra.Command, config *p2p.Config) {
 				return errors.Wrap(err, "parse relay address", z.Str("address", relay))
 			}
 
-			if u.Scheme == "http" {
+			if u.Scheme == httpScheme {
 				log.Warn(cmd.Context(), "Insecure relay address provided, not HTTPS", nil, z.Str("address", relay))
 			}
 		}

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	eth2api "github.com/attestantio/go-eth2-client/api"
 	eth2v1 "github.com/attestantio/go-eth2-client/api/v1"
@@ -17,9 +18,11 @@ import (
 	eth2spec "github.com/attestantio/go-eth2-client/spec"
 	"github.com/attestantio/go-eth2-client/spec/altair"
 	"github.com/attestantio/go-eth2-client/spec/bellatrix"
+	"github.com/attestantio/go-eth2-client/spec/capella"
 	eth2p0 "github.com/attestantio/go-eth2-client/spec/phase0"
 	"github.com/prysmaticlabs/go-bitfield"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/maps"
 
 	"github.com/obolnetwork/charon/app/errors"
 	"github.com/obolnetwork/charon/app/eth2wrap"
@@ -440,12 +443,12 @@ func TestComponent_SubmitProposal(t *testing.T) {
 
 	randao := eth2p0.BLSSignature(sig)
 	unsignedBlock := &eth2spec.VersionedBeaconBlock{
-		Version: eth2spec.DataVersionPhase0,
-		Phase0:  testutil.RandomPhase0BeaconBlock(),
+		Version: eth2spec.DataVersionCapella,
+		Capella: testutil.RandomCapellaBeaconBlock(),
 	}
-	unsignedBlock.Phase0.Body.RANDAOReveal = randao
-	unsignedBlock.Phase0.Slot = slot
-	unsignedBlock.Phase0.ProposerIndex = vIdx
+	unsignedBlock.Capella.Body.RANDAOReveal = randao
+	unsignedBlock.Capella.Slot = slot
+	unsignedBlock.Capella.ProposerIndex = vIdx
 
 	vapi.RegisterGetDutyDefinition(func(ctx context.Context, duty core.Duty) (core.DutyDefinitionSet, error) {
 		return core.DutyDefinitionSet{corePubKey: nil}, nil
@@ -465,9 +468,9 @@ func TestComponent_SubmitProposal(t *testing.T) {
 	require.NoError(t, err)
 
 	signedBlock := &eth2api.VersionedSignedProposal{
-		Version: eth2spec.DataVersionPhase0,
-		Phase0: &eth2p0.SignedBeaconBlock{
-			Message:   unsignedBlock.Phase0,
+		Version: eth2spec.DataVersionCapella,
+		Capella: &capella.SignedBeaconBlock{
+			Message:   unsignedBlock.Capella,
 			Signature: eth2p0.BLSSignature(s),
 		},
 	}
@@ -481,7 +484,9 @@ func TestComponent_SubmitProposal(t *testing.T) {
 		return nil
 	})
 
-	err = vapi.SubmitProposal(ctx, signedBlock)
+	err = vapi.SubmitProposal(ctx, &eth2api.SubmitProposalOpts{
+		Proposal: signedBlock,
+	})
 	require.NoError(t, err)
 }
 
@@ -527,14 +532,14 @@ func TestComponent_SubmitProposalInvalidSignature(t *testing.T) {
 	s, err := tbls.Sign(secret, []byte("invalid msg"))
 	require.NoError(t, err)
 
-	unsignedBlock := testutil.RandomPhase0BeaconBlock()
+	unsignedBlock := testutil.RandomCapellaBeaconBlock()
 	unsignedBlock.Body.RANDAOReveal = eth2p0.BLSSignature(sig)
 	unsignedBlock.Slot = slot
 	unsignedBlock.ProposerIndex = vIdx
 
 	signedBlock := &eth2api.VersionedSignedProposal{
-		Version: eth2spec.DataVersionPhase0,
-		Phase0: &eth2p0.SignedBeaconBlock{
+		Version: eth2spec.DataVersionCapella,
+		Capella: &capella.SignedBeaconBlock{
 			Message:   unsignedBlock,
 			Signature: eth2p0.BLSSignature(s),
 		},
@@ -549,7 +554,9 @@ func TestComponent_SubmitProposalInvalidSignature(t *testing.T) {
 		return nil
 	})
 
-	err = vapi.SubmitProposal(ctx, signedBlock)
+	err = vapi.SubmitProposal(ctx, &eth2api.SubmitProposalOpts{
+		Proposal: signedBlock,
+	})
 	require.ErrorContains(t, err, "signature not verified")
 }
 
@@ -584,16 +591,7 @@ func TestComponent_SubmitProposalInvalidBlock(t *testing.T) {
 		block  *eth2api.VersionedSignedProposal
 		errMsg string
 	}{
-		{
-			name:   "no phase 0 block",
-			block:  &eth2api.VersionedSignedProposal{Version: eth2spec.DataVersionPhase0},
-			errMsg: "data missing",
-		},
-		{
-			name:   "no altair block",
-			block:  &eth2api.VersionedSignedProposal{Version: eth2spec.DataVersionAltair},
-			errMsg: "data missing",
-		},
+		// phase0 and altair are not supported by attestantio
 		{
 			name:   "no bellatrix block",
 			block:  &eth2api.VersionedSignedProposal{Version: eth2spec.DataVersionBellatrix},
@@ -615,28 +613,6 @@ func TestComponent_SubmitProposalInvalidBlock(t *testing.T) {
 			errMsg: "unsupported version",
 		},
 		{
-			name: "no phase 0 sig",
-			block: &eth2api.VersionedSignedProposal{
-				Version: eth2spec.DataVersionPhase0,
-				Phase0: &eth2p0.SignedBeaconBlock{
-					Message:   &eth2p0.BeaconBlock{Slot: eth2p0.Slot(123), Body: testutil.RandomPhase0BeaconBlockBody()},
-					Signature: eth2p0.BLSSignature{},
-				},
-			},
-			errMsg: "no signature found",
-		},
-		{
-			name: "no altair sig",
-			block: &eth2api.VersionedSignedProposal{
-				Version: eth2spec.DataVersionAltair,
-				Altair: &altair.SignedBeaconBlock{
-					Message:   &altair.BeaconBlock{Slot: eth2p0.Slot(123), Body: testutil.RandomAltairBeaconBlockBody()},
-					Signature: eth2p0.BLSSignature{},
-				},
-			},
-			errMsg: "no signature found",
-		},
-		{
 			name: "no bellatrix sig",
 			block: &eth2api.VersionedSignedProposal{
 				Version: eth2spec.DataVersionBellatrix,
@@ -651,83 +627,12 @@ func TestComponent_SubmitProposalInvalidBlock(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err = vapi.SubmitProposal(ctx, test.block)
+			err = vapi.SubmitProposal(ctx, &eth2api.SubmitProposalOpts{
+				Proposal: test.block,
+			})
 			require.ErrorContains(t, err, test.errMsg)
 		})
 	}
-}
-
-func TestComponent_BlindedProposal(t *testing.T) {
-	ctx := context.Background()
-	eth2Cl, err := beaconmock.New()
-	require.NoError(t, err)
-
-	const (
-		slot = 123
-		vIdx = 1
-	)
-
-	slotsPerEpoch, err := eth2Cl.SlotsPerEpoch(context.Background())
-	require.NoError(t, err)
-
-	epoch := eth2p0.Epoch(uint64(slot) / slotsPerEpoch)
-
-	component, err := validatorapi.NewComponentInsecure(t, eth2Cl, vIdx)
-	require.NoError(t, err)
-
-	secret, err := tbls.GenerateSecretKey()
-	require.NoError(t, err)
-
-	pk, err := tbls.SecretToPublicKey(secret)
-	require.NoError(t, err)
-
-	msg := []byte("randao reveal")
-	sig, err := tbls.Sign(secret, msg)
-	require.NoError(t, err)
-
-	randao := eth2p0.BLSSignature(sig)
-	pubkey, err := core.PubKeyFromBytes(pk[:])
-	require.NoError(t, err)
-
-	block1 := &eth2api.VersionedBlindedProposal{
-		Version:   eth2spec.DataVersionPhase0,
-		Bellatrix: testutil.RandomBellatrixBlindedBeaconBlock(),
-	}
-	block1.Bellatrix.Slot = slot
-	block1.Bellatrix.ProposerIndex = vIdx
-	block1.Bellatrix.Body.RANDAOReveal = randao
-
-	component.RegisterGetDutyDefinition(func(ctx context.Context, duty core.Duty) (core.DutyDefinitionSet, error) {
-		return core.DutyDefinitionSet{pubkey: nil}, nil
-	})
-
-	component.RegisterAwaitBlindedProposal(func(ctx context.Context, slot uint64) (*eth2api.VersionedBlindedProposal, error) {
-		return block1, nil
-	})
-
-	// component.RegisterAwaitBlindedBeaconBlock(func(ctx context.Context, slot uint64) (*eth2api.VersionedBlindedBeaconBlock, error) {
-	// 	return block1, nil
-	// })
-
-	component.Subscribe(func(ctx context.Context, duty core.Duty, set core.ParSignedDataSet) error {
-		require.Equal(t, set, core.ParSignedDataSet{
-			pubkey: core.NewPartialSignedRandao(epoch, randao, vIdx),
-		})
-		require.Equal(t, duty, core.NewRandaoDuty(slot))
-
-		return nil
-	})
-
-	opts := &eth2api.BlindedProposalOpts{
-		Slot:         slot,
-		RandaoReveal: randao,
-		Graffiti:     [32]byte{},
-	}
-	ethResp2, err := component.BlindedProposal(ctx, opts)
-	require.NoError(t, err)
-	block2 := ethResp2.Data
-
-	require.Equal(t, block1, block2)
 }
 
 func TestComponent_SubmitBlindedProposal(t *testing.T) {
@@ -797,14 +702,19 @@ func TestComponent_SubmitBlindedProposal(t *testing.T) {
 
 	// Register subscriber
 	vapi.Subscribe(func(ctx context.Context, duty core.Duty, set core.ParSignedDataSet) error {
-		block, ok := set[corePubKey].SignedData.(core.VersionedSignedBlindedProposal)
+		block, ok := set[corePubKey].SignedData.(core.VersionedSignedProposal)
 		require.True(t, ok)
-		require.Equal(t, *signedBlindedBlock, block.VersionedSignedBlindedProposal)
+
+		blindedBlock, err := block.ToBlinded()
+		require.NoError(t, err)
+		require.Equal(t, *signedBlindedBlock, blindedBlock)
 
 		return nil
 	})
 
-	err = vapi.SubmitBlindedProposal(ctx, signedBlindedBlock)
+	err = vapi.SubmitBlindedProposal(ctx, &eth2api.SubmitBlindedProposalOpts{
+		Proposal: signedBlindedBlock,
+	})
 	require.NoError(t, err)
 }
 
@@ -866,14 +776,20 @@ func TestComponent_SubmitBlindedProposalInvalidSignature(t *testing.T) {
 
 	// Register subscriber
 	vapi.Subscribe(func(ctx context.Context, duty core.Duty, set core.ParSignedDataSet) error {
-		block, ok := set[corePubKey].SignedData.(core.VersionedSignedBlindedProposal)
+		block, ok := set[corePubKey].SignedData.(core.VersionedSignedProposal)
 		require.True(t, ok)
 		require.Equal(t, signedBlindedBlock, block)
+
+		blindedBlock, err := block.ToBlinded()
+		require.NoError(t, err)
+		require.Equal(t, signedBlindedBlock, blindedBlock)
 
 		return nil
 	})
 
-	err = vapi.SubmitBlindedProposal(ctx, signedBlindedBlock)
+	err = vapi.SubmitBlindedProposal(ctx, &eth2api.SubmitBlindedProposalOpts{
+		Proposal: signedBlindedBlock,
+	})
 	require.ErrorContains(t, err, "signature not verified")
 }
 
@@ -961,7 +877,9 @@ func TestComponent_SubmitBlindedProposalInvalidBlock(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err = vapi.SubmitBlindedProposal(ctx, test.block)
+			err = vapi.SubmitBlindedProposal(ctx, &eth2api.SubmitBlindedProposalOpts{
+				Proposal: test.block,
+			})
 			require.ErrorContains(t, err, test.errMsg)
 		})
 	}
@@ -1666,6 +1584,104 @@ func TestComponent_SubmitSyncCommitteeContributionsVerify(t *testing.T) {
 	<-done
 }
 
+func TestComponent_ValidatorCache(t *testing.T) {
+	baseValSet := testutil.RandomValidatorSet(t, 10)
+
+	var (
+		allPubSharesByKey = make(map[core.PubKey]map[int]tbls.PublicKey)
+		keyByPubshare     = make(map[tbls.PublicKey]core.PubKey)
+		valByPubkey       = make(map[eth2p0.BLSPubKey]*eth2v1.Validator)
+
+		complete  = make(eth2wrap.CompleteValidators)
+		pubshares []eth2p0.BLSPubKey
+		singleVal eth2v1.Validator
+	)
+
+	for idx, val := range baseValSet {
+		complete[idx] = val
+		valByPubkey[val.Validator.PublicKey] = val
+	}
+
+	bmock, err := beaconmock.New(beaconmock.WithValidatorSet(baseValSet))
+	require.NoError(t, err)
+
+	bmock.CachedValidatorsFunc = func(ctx context.Context) (eth2wrap.ActiveValidators, eth2wrap.CompleteValidators, error) {
+		cc := make(eth2wrap.CompleteValidators)
+		maps.Copy(cc, complete)
+
+		return nil, cc, nil
+	}
+
+	var valEndpointInvocations int
+	bmock.ValidatorsFunc = func(ctx context.Context, opts *eth2api.ValidatorsOpts) (map[eth2p0.ValidatorIndex]*eth2v1.Validator, error) {
+		valEndpointInvocations += len(opts.PubKeys) + len(opts.Indices)
+
+		ret := make(map[eth2p0.ValidatorIndex]*eth2v1.Validator)
+
+		for _, pk := range opts.PubKeys {
+			if val, ok := valByPubkey[pk]; ok {
+				ret[val.Index] = val
+			}
+		}
+
+		return ret, nil
+	}
+
+	i := 4
+	for _, val := range baseValSet {
+		i--
+
+		pubshare, err := tblsconv.PubkeyFromCore(testutil.RandomCorePubKey(t))
+		require.NoError(t, err)
+
+		pubshares = append(pubshares, eth2p0.BLSPubKey(pubshare))
+
+		corePubkey := core.PubKeyFrom48Bytes(val.Validator.PublicKey)
+		allPubSharesByKey[corePubkey] = make(map[int]tbls.PublicKey)
+		allPubSharesByKey[core.PubKeyFrom48Bytes(val.Validator.PublicKey)][1] = pubshare
+		keyByPubshare[pubshare] = corePubkey
+
+		if i == 0 {
+			singleVal = *val
+			break
+		}
+	}
+
+	vapi, err := validatorapi.NewComponent(bmock, allPubSharesByKey, 1, nil, testutil.BuilderFalse, nil)
+	require.NoError(t, err)
+
+	// request validators that are completely cached
+	ret, err := vapi.Validators(context.Background(), &eth2api.ValidatorsOpts{
+		State:   "head",
+		PubKeys: pubshares,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, valEndpointInvocations)
+	require.Len(t, ret.Data, len(pubshares))
+
+	// request validators that are not cached at all by removing singleVal from the cache
+	delete(complete, singleVal.Index)
+
+	share := allPubSharesByKey[core.PubKeyFrom48Bytes(singleVal.Validator.PublicKey)][1]
+
+	ret, err = vapi.Validators(context.Background(), &eth2api.ValidatorsOpts{
+		State:   "head",
+		PubKeys: []eth2p0.BLSPubKey{eth2p0.BLSPubKey(share)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, valEndpointInvocations)
+	require.Len(t, ret.Data, 1)
+
+	// request half-half validators
+	ret, err = vapi.Validators(context.Background(), &eth2api.ValidatorsOpts{
+		State:   "head",
+		PubKeys: pubshares,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, valEndpointInvocations)
+	require.Len(t, ret.Data, len(pubshares))
+}
+
 func TestComponent_GetAllValidators(t *testing.T) {
 	const (
 		totalVals      = 10
@@ -1933,4 +1949,101 @@ func sign(t *testing.T, eth2Cl eth2wrap.Client, secret tbls.PrivateKey, domain s
 	require.NoError(t, err)
 
 	return eth2p0.BLSSignature(sig)
+}
+
+func TestSlotFromTimestamp(t *testing.T) {
+	tests := []struct {
+		name      string
+		network   string
+		timestamp time.Time
+		genesis   time.Time
+		want      eth2p0.Slot
+		wantErr   bool
+	}{
+		{
+			name:      "goerli_slot0",
+			want:      0,
+			network:   "goerli",
+			timestamp: time.Unix(1616508000, 0).UTC(),
+			wantErr:   false,
+		},
+		{
+			name:      "goerli_slot1",
+			want:      1,
+			network:   "goerli",
+			timestamp: time.Unix(1616508000, 0).UTC().Add(time.Second * 12),
+			wantErr:   false,
+		},
+		{
+			name:      "sepolia_slot0",
+			want:      0,
+			network:   "sepolia",
+			timestamp: time.Unix(1655733600, 0).UTC(),
+			wantErr:   false,
+		},
+		{
+			name:      "sepolia_slot1",
+			want:      1,
+			network:   "sepolia",
+			timestamp: time.Unix(1655733600, 0).UTC().Add(time.Second * 12),
+			wantErr:   false,
+		},
+		{
+			name:      "gnosis_slot0",
+			want:      0,
+			network:   "gnosis",
+			timestamp: time.Unix(1638993340, 0).UTC(),
+			wantErr:   false,
+		},
+		{
+			name:      "gnosis_slot1",
+			want:      1,
+			network:   "gnosis",
+			timestamp: time.Unix(1638993340, 0).UTC().Add(time.Second * 12),
+			wantErr:   false,
+		},
+		{
+			name:      "mainnet_slot0",
+			want:      0,
+			network:   "mainnet",
+			timestamp: time.Unix(1606824023, 0).UTC(),
+			wantErr:   false,
+		},
+		{
+			name:      "mainnet_slot1",
+			want:      1,
+			network:   "mainnet",
+			timestamp: time.Unix(1606824023, 0).UTC().Add(time.Second * 12),
+			wantErr:   false,
+		},
+		{
+			name:      "timestamp before genesis",
+			want:      0,
+			network:   "mainnet",
+			timestamp: time.Unix(1606824023, 0).UTC().Add(time.Second * -12),
+			wantErr:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			genesis, err := eth2util.NetworkToGenesisTime(tt.network)
+			require.NoError(t, err)
+
+			ctx := context.Background()
+			eth2Cl, err := beaconmock.New(beaconmock.WithGenesisTime(genesis))
+			require.NoError(t, err)
+
+			got, err := validatorapi.SlotFromTimestamp(ctx, eth2Cl, tt.timestamp)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Equal(t, 0, got)
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, got, tt.want)
+		})
+	}
 }

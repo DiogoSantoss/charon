@@ -46,12 +46,14 @@ type Config struct {
 	P2P           p2p.Config
 	Log           log.Config
 	ShutdownDelay time.Duration
+	Timeout       time.Duration
 
 	KeymanagerAddr      string
 	KeymanagerAuthToken string
 
-	PublishAddr string
-	Publish     bool
+	PublishAddr    string
+	PublishTimeout time.Duration
+	Publish        bool
 
 	TestConfig TestConfig
 }
@@ -189,7 +191,7 @@ func Run(ctx context.Context, conf Config) (err error) {
 		sigLock,
 		sigDepositData,
 		sigValidatorRegistration,
-	})
+	}, conf.Timeout)
 
 	// Register Frost libp2p handlers
 	peerMap := make(map[peer.ID]cluster.NodeIdx)
@@ -334,7 +336,7 @@ func Run(ctx context.Context, conf Config) (err error) {
 	var dashboardURL string
 
 	if conf.Publish {
-		if dashboardURL, err = writeLockToAPI(ctx, conf.PublishAddr, lock); err != nil {
+		if dashboardURL, err = writeLockToAPI(ctx, conf.PublishAddr, lock, conf.PublishTimeout); err != nil {
 			log.Warn(ctx, "Couldn't publish lock file to Obol API", err)
 		}
 	}
@@ -1059,8 +1061,8 @@ func createDistValidators(shares []share, depositDatas [][]eth2p0.DepositData, v
 }
 
 // writeLockToAPI posts the lock file to obol-api and returns the Launchpad dashboard URL.
-func writeLockToAPI(ctx context.Context, publishAddr string, lock cluster.Lock) (string, error) {
-	cl, err := obolapi.New(publishAddr)
+func writeLockToAPI(ctx context.Context, publishAddr string, lock cluster.Lock, timeout time.Duration) (string, error) {
+	cl, err := obolapi.New(publishAddr, obolapi.WithTimeout(timeout))
 	if err != nil {
 		return "", err
 	}
@@ -1088,7 +1090,7 @@ func validateKeymanagerFlags(ctx context.Context, addr, authToken string) error 
 		return errors.Wrap(err, "failed to parse keymanager addr", z.Str("addr", addr))
 	}
 
-	if keymanagerURL.Scheme != "https" {
+	if keymanagerURL.Scheme == "http" {
 		log.Warn(ctx, "Keymanager URL does not use https protocol", nil, z.Str("addr", addr))
 	}
 

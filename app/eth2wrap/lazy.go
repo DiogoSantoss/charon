@@ -12,6 +12,18 @@ import (
 	"github.com/obolnetwork/charon/eth2util/eth2exp"
 )
 
+//go:generate mockery --name=Client --output=mocks --outpkg=mocks --case=underscore
+
+// NewLazyForT creates a new lazy client for testing.
+func NewLazyForT(client Client) Client {
+	return &lazy{
+		provider: func(context.Context) (Client, error) {
+			return client, nil
+		},
+		client: client,
+	}
+}
+
 // newLazy creates a new lazy client.
 func newLazy(provider func(context.Context) (Client, error)) *lazy {
 	return &lazy{
@@ -26,7 +38,7 @@ type lazy struct {
 
 	clientMu sync.RWMutex
 	client   Client
-	valCache func(context.Context) (ActiveValidators, error)
+	valCache func(context.Context) (ActiveValidators, CompleteValidators, error)
 }
 
 // getClient returns the client and true if it is available.
@@ -107,6 +119,24 @@ func (l *lazy) Address() string {
 	return cl.Address()
 }
 
+func (l *lazy) IsActive() bool {
+	cl, ok := l.getClient()
+	if !ok {
+		return false
+	}
+
+	return cl.IsActive()
+}
+
+func (l *lazy) IsSynced() bool {
+	cl, ok := l.getClient()
+	if !ok {
+		return false
+	}
+
+	return cl.IsSynced()
+}
+
 func (l *lazy) ActiveValidators(ctx context.Context) (ActiveValidators, error) {
 	cl, err := l.getOrCreateClient(ctx)
 	if err != nil {
@@ -116,7 +146,16 @@ func (l *lazy) ActiveValidators(ctx context.Context) (ActiveValidators, error) {
 	return cl.ActiveValidators(ctx)
 }
 
-func (l *lazy) SetValidatorCache(valCache func(context.Context) (ActiveValidators, error)) {
+func (l *lazy) CompleteValidators(ctx context.Context) (CompleteValidators, error) {
+	cl, err := l.getOrCreateClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return cl.CompleteValidators(ctx)
+}
+
+func (l *lazy) SetValidatorCache(valCache func(context.Context) (ActiveValidators, CompleteValidators, error)) {
 	l.clientMu.Lock()
 	l.valCache = valCache
 	l.clientMu.Unlock()

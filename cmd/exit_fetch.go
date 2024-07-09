@@ -27,7 +27,7 @@ func newFetchExitCmd(runFunc func(context.Context, exitConfig) error) *cobra.Com
 	cmd := &cobra.Command{
 		Use:   "fetch",
 		Short: "Fetch a signed exit message from the remote API",
-		Long:  `Fetches a fully signed exit message for a given validator from the remote API.`,
+		Long:  `Fetches a fully signed exit message for a given validator from the remote API and writes it to disk.`,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := log.InitLogger(config.Log); err != nil {
@@ -46,6 +46,8 @@ func newFetchExitCmd(runFunc func(context.Context, exitConfig) error) *cobra.Com
 		{privateKeyPath, false},
 		{lockFilePath, false},
 		{validatorPubkey, true},
+		{fetchedExitPath, false},
+		{publishTimeout, false},
 	})
 
 	bindLogFlags(cmd.Flags(), &config.Log)
@@ -84,7 +86,7 @@ func runFetchExit(ctx context.Context, config exitConfig) error {
 
 	ctx = log.WithCtx(ctx, z.Str("validator", validator.String()))
 
-	oAPI, err := obolapi.New(config.PublishAddress)
+	oAPI, err := obolapi.New(config.PublishAddress, obolapi.WithTimeout(config.PublishTimeout))
 	if err != nil {
 		return errors.Wrap(err, "could not create obol api client")
 	}

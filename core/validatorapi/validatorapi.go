@@ -5,6 +5,7 @@ package validatorapi
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"runtime"
 	"testing"
 	"time"
@@ -32,6 +33,42 @@ const (
 	gasLimit    = 30000000
 	zeroAddress = "0x0000000000000000000000000000000000000000"
 )
+
+// SlotFromTimestamp returns the Ethereum slot associated to a timestamp, given the genesis configuration fetched
+// from client.
+func SlotFromTimestamp(ctx context.Context, client eth2wrap.Client, timestamp time.Time) (eth2p0.Slot, error) {
+	genesis, err := client.GenesisTime(ctx)
+	if err != nil {
+		return 0, err
+	} else if timestamp.Before(genesis) {
+		// if timestamp is in the past (can happen in testing scenarios, there's no strict form of checking on it),  fall back on current timestamp.
+		nextTimestamp := time.Now()
+
+		log.Info(
+			ctx,
+			"timestamp before genesis, defaulting to current timestamp",
+			z.I64("genesis_timestamp", genesis.Unix()),
+			z.I64("overridden_timestamp", timestamp.Unix()),
+			z.I64("new_timestamp", nextTimestamp.Unix()),
+		)
+
+		timestamp = nextTimestamp
+	}
+
+	eth2Resp, err := client.Spec(ctx, &eth2api.SpecOpts{})
+	if err != nil {
+		return 0, err
+	}
+
+	slotDuration, ok := eth2Resp.Data["SECONDS_PER_SLOT"].(time.Duration)
+	if !ok {
+		return 0, errors.New("fetch slot duration")
+	}
+
+	delta := timestamp.Sub(genesis)
+
+	return eth2p0.Slot(delta / slotDuration), nil
+}
 
 // NewComponentInsecure returns a new instance of the validator API core workflow component
 // that does not perform signature verification.
@@ -155,7 +192,6 @@ type Component struct {
 	pubKeyByAttFunc           func(ctx context.Context, slot, commIdx, valCommIdx uint64) (core.PubKey, error)
 	awaitAttFunc              func(ctx context.Context, slot, commIdx uint64) (*eth2p0.AttestationData, error)
 	awaitProposalFunc         func(ctx context.Context, slot uint64) (*eth2api.VersionedProposal, error)
-	awaitBlindedProposalFunc  func(ctx context.Context, slot uint64) (*eth2api.VersionedBlindedProposal, error)
 	awaitSyncContributionFunc func(ctx context.Context, slot, subcommIdx uint64, beaconBlockRoot eth2p0.Root) (*altair.SyncCommitteeContribution, error)
 	awaitAggAttFunc           func(ctx context.Context, slot uint64, attestationRoot eth2p0.Root) (*eth2p0.Attestation, error)
 	awaitAggSigDBFunc         func(context.Context, core.Duty, core.PubKey) (core.SignedData, error)
@@ -167,12 +203,6 @@ type Component struct {
 // It supports a single function, since it is an input of the component.
 func (c *Component) RegisterAwaitProposal(fn func(ctx context.Context, slot uint64) (*eth2api.VersionedProposal, error)) {
 	c.awaitProposalFunc = fn
-}
-
-// RegisterAwaitBlindedProposal registers a function to query unsigned blinded beacon block proposals by providing necessary options.
-// It supports a single function, since it is an input of the component.
-func (c *Component) RegisterAwaitBlindedProposal(fn func(ctx context.Context, slot uint64) (*eth2api.VersionedBlindedProposal, error)) {
-	c.awaitBlindedProposalFunc = fn
 }
 
 // RegisterAwaitAttestation registers a function to query attestation data.
@@ -354,69 +384,17 @@ func (c Component) Proposal(ctx context.Context, opts *eth2api.ProposalOpts) (*e
 		return nil, err
 	}
 
-	return wrapResponse(proposal), nil
-}
-
-func (c Component) BlindedProposal(ctx context.Context, opts *eth2api.BlindedProposalOpts) (*eth2api.Response[*eth2api.VersionedBlindedProposal], error) {
-	// Get proposer pubkey (this is a blocking query).
-	pubkey, err := c.getProposerPubkey(ctx, core.NewBuilderProposerDuty(uint64(opts.Slot)))
-	if err != nil {
-		return nil, err
-	}
-
-	epoch, err := eth2util.EpochFromSlot(ctx, c.eth2Cl, opts.Slot)
-	if err != nil {
-		return nil, err
-	}
-
-	sigEpoch := eth2util.SignedEpoch{
-		Epoch:     epoch,
-		Signature: opts.RandaoReveal,
-	}
-
-	duty := core.NewRandaoDuty(uint64(opts.Slot))
-	parSig := core.NewPartialSignedRandao(sigEpoch.Epoch, sigEpoch.Signature, c.shareIdx)
-
-	// Verify randao signature
-	err = c.verifyPartialSig(ctx, parSig, pubkey)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, sub := range c.subs {
-		// No need to clone since sub auto clones.
-		parsigSet := core.ParSignedDataSet{
-			pubkey: parSig,
-		}
-		err := sub(ctx, duty, parsigSet)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// In the background, the following needs to happen before the
-	// unsigned blinded beacon block will be returned below:
-	//  - Threshold number of VCs need to submit their partial randao reveals.
-	//  - These signatures will be exchanged and aggregated.
-	//  - The aggregated signature will be stored in AggSigDB.
-	//  - Scheduler (in the meantime) will schedule a DutyBuilderProposer (to create a unsigned blinded block).
-	//  - Fetcher will then block waiting for an aggregated randao reveal.
-	//  - Once it is found, Fetcher will fetch an unsigned blinded block from the beacon
-	//    node including the aggregated randao in the request.
-	//  - Consensus will agree upon the unsigned blinded block and insert the resulting block in the DutyDB.
-	//  - Once inserted, the query below will return.
-
-	// Query unsigned block (this is blocking).
-	proposal, err := c.awaitBlindedProposalFunc(ctx, uint64(opts.Slot))
-	if err != nil {
-		return nil, err
-	}
+	// We do not persist this v3-specific data in the pipeline,
+	// but to comply with the API, we need to return non-nil values,
+	// and these should be unified across all nodes.
+	proposal.ConsensusValue = big.NewInt(1)
+	proposal.ExecutionValue = big.NewInt(1)
 
 	return wrapResponse(proposal), nil
 }
 
-func (c Component) SubmitProposal(ctx context.Context, proposal *eth2api.VersionedSignedProposal) error {
-	slot, err := proposal.Slot()
+func (c Component) SubmitProposal(ctx context.Context, opts *eth2api.SubmitProposalOpts) error {
+	slot, err := opts.Proposal.Slot()
 	if err != nil {
 		return err
 	}
@@ -430,7 +408,7 @@ func (c Component) SubmitProposal(ctx context.Context, proposal *eth2api.Version
 	duty := core.NewProposerDuty(uint64(slot))
 	ctx = log.WithCtx(ctx, z.Any("duty", duty))
 
-	signedData, err := core.NewPartialVersionedSignedProposal(proposal, c.shareIdx)
+	signedData, err := core.NewPartialVersionedSignedProposal(opts.Proposal, c.shareIdx)
 	if err != nil {
 		return err
 	}
@@ -441,7 +419,7 @@ func (c Component) SubmitProposal(ctx context.Context, proposal *eth2api.Version
 		return err
 	}
 
-	log.Debug(ctx, "Beacon proposal submitted by validator client", z.Str("block_version", proposal.Version.String()))
+	log.Debug(ctx, "Beacon proposal submitted by validator client", z.Str("block_version", opts.Proposal.Version.String()))
 
 	set := core.ParSignedDataSet{pubkey: signedData}
 	for _, sub := range c.subs {
@@ -455,22 +433,22 @@ func (c Component) SubmitProposal(ctx context.Context, proposal *eth2api.Version
 	return nil
 }
 
-func (c Component) SubmitBlindedProposal(ctx context.Context, proposal *eth2api.VersionedSignedBlindedProposal) error {
-	slot, err := proposal.Slot()
+func (c Component) SubmitBlindedProposal(ctx context.Context, opts *eth2api.SubmitBlindedProposalOpts) error {
+	slot, err := opts.Proposal.Slot()
 	if err != nil {
 		return err
 	}
 
-	pubkey, err := c.getProposerPubkey(ctx, core.NewBuilderProposerDuty(uint64(slot)))
+	pubkey, err := c.getProposerPubkey(ctx, core.NewProposerDuty(uint64(slot)))
 	if err != nil {
 		return err
 	}
 
 	// Save Partially Signed Blinded Block to ParSigDB
-	duty := core.NewBuilderProposerDuty(uint64(slot))
+	duty := core.NewProposerDuty(uint64(slot))
 	ctx = log.WithCtx(ctx, z.Any("duty", duty))
 
-	signedData, err := core.NewPartialVersionedSignedBlindedProposal(proposal, c.shareIdx)
+	signedData, err := core.NewPartialVersionedSignedBlindedProposal(opts.Proposal, c.shareIdx)
 	if err != nil {
 		return err
 	}
@@ -519,7 +497,7 @@ func (c Component) submitRegistration(ctx context.Context, registration *eth2api
 	if err != nil {
 		return err
 	}
-	slot, err := c.slotFromTimestamp(ctx, timestamp)
+	slot, err := SlotFromTimestamp(ctx, c.eth2Cl, timestamp)
 	if err != nil {
 		return err
 	}
@@ -557,7 +535,7 @@ func (c Component) SubmitValidatorRegistrations(ctx context.Context, registratio
 		return nil // Nothing to do
 	}
 
-	slot, err := c.slotFromTimestamp(ctx, time.Now())
+	slot, err := SlotFromTimestamp(ctx, c.eth2Cl, time.Now())
 	if err != nil {
 		return err
 	}
@@ -982,27 +960,76 @@ func (c Component) SyncCommitteeDuties(ctx context.Context, opts *eth2api.SyncCo
 }
 
 func (c Component) Validators(ctx context.Context, opts *eth2api.ValidatorsOpts) (*eth2api.Response[map[eth2p0.ValidatorIndex]*eth2v1.Validator], error) {
-	if len(opts.PubKeys) != 0 {
-		var pubkeys []eth2p0.BLSPubKey
-		for _, pubshare := range opts.PubKeys {
-			pubkey, err := c.getPubKeyFunc(pubshare)
-			if err != nil {
-				return nil, err
-			}
-
-			pubkeys = append(pubkeys, pubkey)
+	if len(opts.PubKeys) == 0 && len(opts.Indices) == 0 {
+		// fetch all validators
+		eth2Resp, err := c.eth2Cl.Validators(ctx, opts)
+		if err != nil {
+			return nil, err
 		}
 
-		opts.PubKeys = pubkeys
+		convertedVals, err := c.convertValidators(eth2Resp.Data, len(opts.Indices) == 0)
+		if err != nil {
+			return nil, err
+		}
+
+		return wrapResponse(convertedVals), nil
 	}
 
-	eth2Resp, err := c.eth2Cl.Validators(ctx, opts)
+	cachedValidators, err := c.eth2Cl.CompleteValidators(ctx)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "can't fetch complete validators cache")
 	}
-	vals := eth2Resp.Data
 
-	convertedVals, err := c.convertValidators(vals, len(opts.Indices) == 0)
+	// Match pubshares to the associated full validator public key
+	var pubkeys []eth2p0.BLSPubKey
+	for _, pubshare := range opts.PubKeys {
+		pubkey, err := c.getPubKeyFunc(pubshare)
+		if err != nil {
+			return nil, err
+		}
+
+		pubkeys = append(pubkeys, pubkey)
+	}
+
+	var (
+		nonCachedPubkeys []eth2p0.BLSPubKey
+		ret              = make(map[eth2p0.ValidatorIndex]*eth2v1.Validator)
+	)
+
+	// Index cached validators by their pubkey for quicker lookup
+	cvMap := make(map[eth2p0.BLSPubKey]eth2p0.ValidatorIndex)
+	for vIdx, cpubkey := range cachedValidators {
+		cvMap[cpubkey.Validator.PublicKey] = vIdx
+	}
+
+	// Check if any of the pubkeys passed as argument are already cached
+	for _, ncVal := range pubkeys {
+		vIdx, ok := cvMap[ncVal]
+		if !ok {
+			nonCachedPubkeys = append(nonCachedPubkeys, ncVal)
+			continue
+		}
+
+		ret[vIdx] = cachedValidators[vIdx]
+	}
+
+	if len(nonCachedPubkeys) != 0 || len(opts.Indices) > 0 {
+		log.Debug(ctx, "Requesting validators to upstream beacon node", z.Int("non_cached_pubkeys_amount", len(nonCachedPubkeys)), z.Int("indices", len(opts.Indices)))
+
+		opts.PubKeys = nonCachedPubkeys
+
+		eth2Resp, err := c.eth2Cl.Validators(ctx, opts)
+		if err != nil {
+			return nil, errors.Wrap(err, "fetching non-cached validators from BN")
+		}
+		for idx, val := range eth2Resp.Data {
+			ret[idx] = val
+		}
+	} else {
+		log.Debug(ctx, "All validators requested were cached", z.Int("amount_requested", len(opts.PubKeys)))
+	}
+
+	convertedVals, err := c.convertValidators(ret, len(opts.Indices) == 0)
 	if err != nil {
 		return nil, err
 	}
@@ -1021,45 +1048,30 @@ func (Component) NodeVersion(context.Context, *eth2api.NodeVersionOpts) (*eth2ap
 // convertValidators returns the validator map with root public keys replaced by public shares for all validators that are part of the cluster.
 func (c Component) convertValidators(vals map[eth2p0.ValidatorIndex]*eth2v1.Validator, ignoreNotFound bool) (map[eth2p0.ValidatorIndex]*eth2v1.Validator, error) {
 	resp := make(map[eth2p0.ValidatorIndex]*eth2v1.Validator)
-	for vIdx, val := range vals {
-		if val == nil || val.Validator == nil {
+	for vIdx, rawVal := range vals {
+		if rawVal == nil || rawVal.Validator == nil {
 			return nil, errors.New("validator data cannot be nil")
 		}
 
-		pubshare, ok := c.getPubShareFunc(val.Validator.PublicKey)
+		innerVal := *rawVal.Validator
+
+		pubshare, ok := c.getPubShareFunc(innerVal.PublicKey)
 		if !ok && !ignoreNotFound {
 			return nil, errors.New("pubshare not found")
 		} else if ok {
-			val.Validator.PublicKey = pubshare
+			innerVal.PublicKey = pubshare
 		}
 
-		resp[vIdx] = val
+		var val eth2v1.Validator
+		val.Index = rawVal.Index
+		val.Status = rawVal.Status
+		val.Balance = rawVal.Balance
+		val.Validator = &innerVal
+
+		resp[vIdx] = &val
 	}
 
 	return resp, nil
-}
-
-func (c Component) slotFromTimestamp(ctx context.Context, timestamp time.Time) (eth2p0.Slot, error) {
-	genesis, err := c.eth2Cl.GenesisTime(ctx)
-	if err != nil {
-		return 0, err
-	} else if timestamp.Before(genesis) {
-		return 0, errors.New("registration timestamp before genesis")
-	}
-
-	eth2Resp, err := c.eth2Cl.Spec(ctx, &eth2api.SpecOpts{})
-	if err != nil {
-		return 0, err
-	}
-
-	slotDuration, ok := eth2Resp.Data["SECONDS_PER_SLOT"].(time.Duration)
-	if !ok {
-		return 0, errors.New("fetch slot duration")
-	}
-
-	delta := timestamp.Sub(genesis)
-
-	return eth2p0.Slot(delta / slotDuration), nil
 }
 
 func (c Component) getProposerPubkey(ctx context.Context, duty core.Duty) (core.PubKey, error) {
@@ -1173,7 +1185,7 @@ func (c Component) ProposerConfig(ctx context.Context) (*eth2exp.ProposerConfigR
 	}
 	timestamp = timestamp.Add(slotDuration) // Use slot 1 for timestamp to override pre-generated registrations.
 
-	slot, err := c.slotFromTimestamp(ctx, time.Now())
+	slot, err := SlotFromTimestamp(ctx, c.eth2Cl, time.Now())
 	if err != nil {
 		return nil, err
 	}
