@@ -155,6 +155,7 @@ func ConsumePerformanceBuffer() {
 }
 
 func RecordStep(peerIdx int64, step Step) {
+	return
 	buffer <- BufferEntry{
 		peer: peerIdx,
 		step: step,
