@@ -47,6 +47,37 @@ func createBLSKeys(t *testing.T, n, f uint) (tbls.PublicKey, tbls.PrivateKey, ma
 	return abftPublic, abftSecret, abftPubKeys, abftShares
 }
 
+func TestGenerateKeys(t *testing.T) {
+	bls_full_public, _, bls_shares_private, bls_shares_public := createBLSKeys(t, 4, 1)
+
+	// Change this to desired path
+	path := "$HOME/"
+
+	// All filenames must match with ones in component.go
+
+	filename := "bls_full_public"
+	file, err := os.Create(os.ExpandEnv(path + filename))
+	require.NoError(t, err)
+	file.Write(bls_full_public[:])
+	file.Close()
+
+	for idx, key := range bls_shares_private {
+		filename = fmt.Sprintf("bls_share_private_%d", idx)
+		file, err = os.Create(os.ExpandEnv(path + filename))
+		require.NoError(t, err)
+		file.Write(key[:])
+		file.Close()
+	}
+
+	for idx, key := range bls_shares_public {
+		filename = fmt.Sprintf("bls_share_public_%d", idx)
+		file, err = os.Create(os.ExpandEnv(path + filename))
+		require.NoError(t, err)
+		file.Write(key[:])
+		file.Close()
+	}
+}
+
 func TestComponentPerformanceLatency(t *testing.T) {
 
 	// Consume metrics buffer
