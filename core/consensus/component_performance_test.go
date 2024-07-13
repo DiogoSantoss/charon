@@ -48,7 +48,7 @@ func createBLSKeys(t *testing.T, n, f uint) (tbls.PublicKey, tbls.PrivateKey, ma
 }
 
 func TestGenerateKeys(t *testing.T) {
-	bls_full_public, _, bls_shares_private, bls_shares_public := createBLSKeys(t, 4, 1)
+	bls_full_public, _, bls_shares_public, bls_shares_private := createBLSKeys(t, 4, 1)
 
 	// Change this to desired path
 	path := "$HOME/"
