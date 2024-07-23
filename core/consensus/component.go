@@ -700,7 +700,7 @@ func (c *Component) runInstance(ctx context.Context, duty core.Duty) (err error)
 	}
 
 	core.RecordStep(peerIdx, core.FINISH_SETUP)
-	testingAlea := true
+	testingAlea := false
 
 	if testingAlea {
 		// Run the algo, blocking until the context is cancelled.

@@ -155,7 +155,6 @@ func ConsumePerformanceBuffer() {
 }
 
 func RecordStep(peerIdx int64, step Step) {
-	return
 	buffer <- BufferEntry{
 		peer: peerIdx,
 		step: step,
@@ -195,7 +194,7 @@ func ComputeAverageStep(stepStart, stepFinish Step, nodes int) (avg float64) {
 		start := metric[stepStart]
 		finish := metric[stepFinish]
 		length := int(math.Min(float64(len(start)), float64(len(finish))))
-		
+
 		if length == 0 {
 			continue
 		}
