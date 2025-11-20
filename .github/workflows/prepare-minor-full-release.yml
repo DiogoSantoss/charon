@@ -272,7 +272,9 @@ jobs:
           EOF
           fi
 
-          cat << EOF >> $GITHUB_STEP_SUMMARY
+          # Only show next steps if both PRs were created successfully
+          if [[ -n "$STABLE_PR_NUMBER" && -n "$DEV_PR_NUMBER" ]]; then
+            cat << EOF >> $GITHUB_STEP_SUMMARY
           ### Next Steps
           1. Review and merge the stable version PR to \`${{ steps.find_branch.outputs.RELEASE_BRANCH }}\`
           2. After the stable PR is merged, manually create and push the tag \`${{ steps.version.outputs.STABLE_VERSION }}\`:
@@ -287,3 +289,4 @@ jobs:
 
           **Note:** This workflow is for minor releases (vX.Y.0). Patch releases (vX.Y.Z) use a separate workflow.
           EOF
+          fi
