@@ -24,7 +24,7 @@ jobs:
           git fetch --all
 
           # Find all minor release branches matching pattern main-vX.Y
-          RELEASE_BRANCHES=$(git branch -r | grep -E 'origin/main-v[0-9]+\.[0-9]+$' | sed 's|origin/||' | sort -V)
+          RELEASE_BRANCHES=$(git branch -r --format='%(refname:short)' | grep -E 'origin/main-v[0-9]+\.[0-9]+$' | sed 's|origin/||' | sort -V)
 
           if [[ -z "$RELEASE_BRANCHES" ]]; then
             echo "::error::No minor release branches found matching pattern 'main-vX.Y'"
