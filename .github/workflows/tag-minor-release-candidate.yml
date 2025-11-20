@@ -116,7 +116,7 @@ jobs:
           ### Next Steps
           1. The docker image will be automatically built with tag \`${{ steps.latest_rc.outputs.NEW_TAG }}\`
           2. Test the release candidate thoroughly (Kurtosis, Hoodi environments, etc.)
-          3. If successful, proceed with "Tag Minor Full Release" workflow
+          3. If successful, proceed with "Prepare Minor Full Release" workflow
           4. If fixes needed:
              - Merge fixes to \`main\` branch
              - Cherry-pick fixes to \`${{ steps.find_branch.outputs.RELEASE_BRANCH }}\`
