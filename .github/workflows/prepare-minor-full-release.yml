@@ -106,8 +106,8 @@ jobs:
           STABLE_VERSION="${{ steps.version.outputs.STABLE_VERSION }}"
           WORK_BRANCH="obol-gh-actions/bump-version-to-${STABLE_VERSION}-stable"
 
-          # Create work branch from release branch
-          git checkout -B "$WORK_BRANCH" "origin/$RELEASE_BRANCH"
+          # Checkout the release branch
+          git checkout "$RELEASE_BRANCH"
 
           # Update version file from vX.Y-rc to vX.Y
           VERSION_FILE="app/version/version.go"
@@ -129,7 +129,7 @@ jobs:
           grep "var version" "$VERSION_FILE"
 
           echo "WORK_BRANCH=${WORK_BRANCH}" >> $GITHUB_OUTPUT
-          echo "::notice::Prepared work branch: ${WORK_BRANCH}"
+          echo "::notice::Prepared changes for: ${WORK_BRANCH}"
 
       - name: 6. Create PR to Release Branch for Stable Version
         id: create_stable_pr
@@ -174,8 +174,8 @@ jobs:
           MINOR="${{ steps.version.outputs.MINOR }}"
           WORK_BRANCH="obol-gh-actions/bump-version-to-v${MAJOR}.${NEXT_MINOR}-dev"
 
-          # Create work branch from main
-          git checkout -B "$WORK_BRANCH" origin/main
+          # Ensure we're on main branch
+          git checkout main
 
           # Update version file to next dev version
           VERSION_FILE="app/version/version.go"
@@ -192,7 +192,7 @@ jobs:
           grep "var version" "$VERSION_FILE"
 
           echo "DEV_WORK_BRANCH=${WORK_BRANCH}" >> $GITHUB_OUTPUT
-          echo "::notice::Prepared dev work branch: ${WORK_BRANCH}"
+          echo "::notice::Prepared changes for: ${WORK_BRANCH}"
 
       - name: 9. Create PR to Main for Next Dev Version
         id: create_dev_pr
